@@ -1,0 +1,17 @@
+{
+  "name": "PartyPlay 6",
+  "short_name": "PartyPlay",
+  "description": "Minispiele für bis zu 6 Spieler – jeder auf dem eigenen Handy.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "landscape",
+  "background_color": "#3b0f8c",
+  "theme_color": "#3b0f8c",
+  "lang": "de",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <title>PartyPlay 6</title>
+  <meta name="description" content="Minispiele für bis zu 6 Spieler – jeder auf dem eigenen Handy.">
+  <meta name="theme-color" content="#3b0f8c">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="PartyPlay 6">
+  <meta name="format-detection" content="telephone=no">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" type="image/png" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&display=swap">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="app"></div>
+  <div id="rotate">📱↻<br>Bitte das Handy quer halten</div>
+  <noscript><p style="color:#fff;padding:24px">Bitte JavaScript aktivieren.</p></noscript>
+
+  <script>
+    // Fehleranzeige: Auf dem Handy gibt es keine Konsole – Fehler erscheinen hier unten (antippen zum Schließen).
+    (function () {
+      var box;
+      function show(msg) {
+        try {
+          if (!box) {
+            box = document.createElement('div');
+            box.id = 'err-banner';
+            box.onclick = function () { box.style.display = 'none'; box.textContent = ''; };
+            document.body.appendChild(box);
+          }
+          box.style.display = 'block';
+          box.textContent = ('⚠️ ' + msg).slice(0, 400);
+        } catch (e) {}
+      }
+      window.addEventListener('error', function (e) {
+        if (e.target && e.target !== window && e.target.tagName) return; // Ressourcen (Schrift/Bild) ignorieren
+        show((e.message || 'Fehler') + (e.filename ? ' – ' + e.filename.split('/').pop() + ':' + e.lineno : ''));
+      });
+      window.addEventListener('unhandledrejection', function (e) {
+        var r = e.reason; show('Fehler: ' + ((r && r.message) || r));
+      });
+    })();
+  </script>
+  <script type="module">
+    import { boot } from './core/app.js';
+    boot().catch(function (e) {
+      console.error(e);
+      var a = document.getElementById('app');
+      a.innerHTML = '<div style="padding:28px;color:#fff;font-family:sans-serif"><h2>😵 Start fehlgeschlagen</h2><p>' + String((e && e.message) || e) + '</p><button onclick="location.reload()" style="font-size:18px;padding:12px 20px">Neu laden</button></div>';
+    });
+  </script>
+</body>
+</html>

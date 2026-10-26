@@ -1,0 +1,9 @@
+{
+  "name": "partyplay-6",
+  "private": true,
+  "type": "module",
+  "description": "PartyPlay 6 – Minispiel-Sammlung für bis zu 6 Spieler (PWA, Firebase Realtime Database)",
+  "scripts": {
+    "test": "node tests/scoring.test.mjs && node tests/game-logic.test.mjs"
+  }
+}
