@@ -3,7 +3,7 @@
 Minispiel-Sammlung für **bis zu 6 Spieler** – jeder spielt auf **seinem eigenen Handy** (Android & iPhone), im **Querformat**.
 Vorbild: „2 3 4 Player Games“. Reine Web-App (PWA): HTML + JavaScript (ES-Module) + Canvas, **kein Build-Schritt**, keine Installation.
 
-**Stand: v1.0** – 38 Spiele, Online-Partys, K.-o.-Turnier, Themen-Cups, Shop, Erfolge, Missionen, Freunde.
+**Stand: v1.0** – 39 Spiele, Online-Partys, K.-o.-Turnier, Themen-Cups, Shop, Erfolge, Missionen, Freunde.
 
 ## 📱 In 10 Minuten mit den Geschwistern spielen (alles nur mit dem Handy)
 
@@ -30,13 +30,13 @@ Ohne Firebase läuft die App im **Demo-Modus** (nur dieses Gerät, mit Bots) –
 
 ## ✅ Was drin ist
 
-**Spiele (38)** – jedes in einer eigenen Datei unter `games/`:
+**Spiele (39)** – jedes in einer eigenen Datei unter `games/`:
 - 🏁 Rennen: Tipp-Rennen · Rennwagen · Hühner-Hüpfer
 - ⚡ Reaktion: Schnellzieher · Takt-Meister · Wisch-Meister
 - ⚽ Sport: Tauziehen (Teams) · Fußball · Air-Hockey · Billard · Korbwurf · Elfmeter
 - 🥊 Arena: Arena-Schubser · Schlangen-Arena · Panzer-Arena · Heiße Bombe
 - 🎯 Geschick: Feuerregen · Sterne-Sammeln · Taube · Treffer-Balken · Ninja-Sterne · Wippe (Neigungssensor) · Maulwurf-Klopfen
-- 🧠 Denken: Mathe-Blitz · Farbwort · Farb-Gedächtnis · Quiz-Blitz · Schätz-Meister · Winkel-Schätzen · Wort-Blitz
+- 🧠 Denken: Mathe-Blitz · Farbwort · Farb-Gedächtnis · Quiz-Blitz · Schätz-Meister · Winkel-Schätzen · Wort-Blitz · Größen-Check (Pisa-Turm vs. Eiffelturm: maßstabsgetreu einstellen, 10 Duelle je Partie)
 - ♟️ Brett (Duelle): Tic-Tac-Toe · Vier gewinnt · Schere-Stein-Papier · Mancala · Dame
 - 🎉 Party & Koop: Mehrheit · Zeichnen & Raten · Raketenstart
 
@@ -67,7 +67,7 @@ Sync-Arten: `host` (Admin simuliert, ~15 Hz Snapshots, Clients interpolieren) ·
 
 ## 🧪 Tests
 ```
-npm test        # Punktelogik, Spiel-/Host-Logik, K.-o., Fortschritt, Freunde, Rauchtest aller 38 Spiele (Node, ohne Browser)
+npm test        # Punktelogik, Spiel-/Host-Logik, K.-o., Fortschritt, Freunde, Rauchtest aller 39 Spiele (Node, ohne Browser)
 ```
 Zusätzlich wurde im Headless-Chromium (Handy-Format 844×390) getestet: jedes Spiel über die echte Oberfläche, mehrere „Handys“ lokal und **online mit dem echten Firebase-SDK gegen den Realtime-Database-Emulator – mit genau den Regeln aus `core/firebase.js`** (Party, Admin-Wechsel, Freunde inkl. verbotener Zugriffe).
 

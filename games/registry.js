@@ -33,11 +33,12 @@ import viergewinnt from './viergewinnt.js';
 import ssp from './ssp.js';
 import mancala from './mancala.js';
 import mehrheit from './mehrheit.js';
+import groesse from './groesse.js';
 import rakete from './rakete.js';
 import dame from './dame.js';
 import elfmeter from './elfmeter.js';
 import zeichnenraten from './zeichnenraten.js';
 
-export const GAMES = [tipprennen, schnellzieher, tauziehen, schubser, matheblitz, tictactoe, schlangen, panzer, bombe, ausweichen, sterne, rennen, fussball, airhockey, billard, taube, huehner, timing, takt, wurf, shuriken, balance, maulwurf, wisch, farbwort, farbgedaechtnis, quiz, schaetzen, winkel, wortblitz, viergewinnt, ssp, mancala, mehrheit, rakete, dame, elfmeter, zeichnenraten];
+export const GAMES = [tipprennen, schnellzieher, tauziehen, schubser, matheblitz, tictactoe, schlangen, panzer, bombe, ausweichen, sterne, rennen, fussball, airhockey, billard, taube, huehner, timing, takt, wurf, shuriken, balance, maulwurf, wisch, farbwort, farbgedaechtnis, quiz, schaetzen, winkel, wortblitz, viergewinnt, ssp, mancala, mehrheit, groesse, rakete, dame, elfmeter, zeichnenraten];
 export const byId = Object.fromEntries(GAMES.map((g) => [g.id, g]));
 export const STECHEN_GAME = 'schnellzieher'; // Entscheidungsspiel bei Gleichstand an der Spitze

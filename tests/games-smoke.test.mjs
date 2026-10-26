@@ -9,6 +9,7 @@ export const FUZZ = {
   elfmeter: (inst, uid, rng, t, s) => (inst.ph === 'pick' && rng() < 0.06 ? { z: Math.floor(rng() * 6), n: ++s.n } : null),
   zeichnenraten: (inst, uid, rng, t, s) => (inst.ph === 'draw' && uid !== inst.drawer() && rng() < 0.04 ? { g: rng() < 0.35 ? inst.word() : 'Irrtum', n: ++s.n } : null),
   dame: (inst, uid, rng, t, s) => { const i = inst.idx(uid); if (i !== inst.turn || rng() > 0.2) return null; const ms = inst.b ? require_moves(inst.b, i, inst.must) : []; return ms.length ? { from: ms[0].from, to: ms[0].to } : null; },
+  groesse: (inst, uid, rng, t, s) => (inst.ph === 'pick' && rng() < 0.1 ? { a: Math.floor(rng() * 1001), ok: rng() < 0.4 ? 1 : 0, n: ++s.n } : null),
   mehrheit: (inst, uid, rng, t, s) => (inst.ph === 'pick' && rng() < 0.08 ? { pick: Math.floor(rng() * 4), n: ++s.n } : null),
   ssp: (inst, uid, rng, t, s) => (inst.ph === 'pick' && rng() < 0.05 ? { pick: Math.floor(rng() * 3), n: ++s.n } : null),
   farbgedaechtnis: (inst, uid, rng, t, s) => (inst.phase === 'input' && rng() < 0.15 ? { pick: rng() < 0.6 ? inst.seq[inst.pos] : Math.floor(rng() * 4), n: ++s.n } : null),

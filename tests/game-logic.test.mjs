@@ -17,10 +17,12 @@ import { sow } from '../games/mancala.js';
 import { profile } from '../core/profile.js';
 import { track, ensureMissions, claimMission, ACHIEVEMENTS, updateHighscore, MISSIONS } from '../core/progress.js';
 import { buy, FIGURES, owns, ownsAvatar } from '../core/shop.js';
+import groesse, { buildRounds, accuracy, pxOf, vOf, fmtSize, fmtX } from '../games/groesse.js';
 import { Friends, normCode, showCode, agoText } from '../core/friends.js';
 import { seedOrder, makeBracket, nextMatch, recordGame, placements, roundName, readBracket } from '../core/ko.js';
 
 let n = 0;
+const REVEAL_T_TEST = 6;
 const t = async (name, fn) => { await fn(); n++; console.log('  ✓', name); };
 
 function mkCtx(game, count, { seed = 1, teams = false, level = 'mittel' } = {}) {
@@ -477,6 +479,54 @@ await t('Freunde: Code, Anfrage, Annehmen, Anwesenheit, Einladung, Entfernen', a
   assert.equal(await tpA.get('social/uC/invites/uA'), null);
   assert.equal(agoText(Date.now() - 5 * 60000), 'vor 5 Min');
   [fa, fb, fc].forEach((f) => f.stop());
+});
+
+await t('Größen-Check: 10 verschiedene Duelle je Partie, Genauigkeit in Prozent, Regler-Umrechnung, Bots', async () => {
+  const a = buildRounds(111), b = buildRounds(111), c = buildRounds(222);
+  assert.equal(a.length, 10);
+  assert.deepEqual(a.map((r) => r.a + '>' + r.b), b.map((r) => r.a + '>' + r.b), 'gleicher Seed → gleiche Runden bei allen Geräten');
+  assert.notDeepEqual(a.map((r) => r.a + '>' + r.b), c.map((r) => r.a + '>' + r.b), 'anderer Seed → andere Partie');
+  assert.equal(new Set(a.map((r) => [r.a, r.b].sort().join('-'))).size, 10, 'kein Paar doppelt');
+  const dirs = new Set();
+  for (let seed = 1; seed <= 60; seed++) for (const R of buildRounds(seed)) {
+    assert.ok(R.lo < R.truePx / 1.8 && R.hi > R.truePx * 1.5, `Lösung liegt im Regler-Bereich (${R.a}>${R.b})`);
+    assert.ok(R.hi <= 236 && R.truePx > 5 && R.refPx > 5 && R.refPx <= 236, `Darstellung passt ins Bild (${R.a}>${R.b}: ${R.refPx}/${R.truePx})`);
+    assert.ok(Math.abs(Math.log(pxOf(R, R.v0) / R.truePx)) >= 0.27, 'Startwert ist nie die Lösung');
+    assert.ok(Math.abs(vOf(R, pxOf(R, 640)) - 640) < 1e-6, 'Umrechnung Regler ↔ Pixel ist umkehrbar');
+    dirs.add(R.ratio > 1 ? 'groesser' : 'kleiner');
+  }
+  assert.equal(dirs.size, 2, 'mal größer, mal kleiner machen');
+  // Pisa → Eiffelturm: echtes Verhältnis 330/56
+  const pe = buildRounds(1).concat(...Array.from({ length: 40 }, (_, i) => buildRounds(i + 2))).find((r) => r.a === 'pisa' && r.b === 'eiffel');
+  assert.ok(pe && Math.abs(pe.ratio - 330 / 56) < 1e-9 && Math.abs(pe.truePx / pe.refPx - 330 / 56) < 1e-9);
+  assert.equal(accuracy(100, 100), 100);
+  assert.equal(accuracy(110, 100), 91); assert.equal(accuracy(100 / 1.1, 100), 91, 'zu groß und zu klein gleich streng');
+  assert.equal(accuracy(300, 100), 0); assert.equal(accuracy(20, 100), 0); assert.equal(accuracy(0, 100), 0);
+  assert.equal(fmtSize(330), '330 m'); assert.equal(fmtSize(1.75), '1,75 m'); assert.equal(fmtSize(0.067), '6,7 cm'); assert.equal(fmtSize(0.24), '24 cm');
+  assert.equal(fmtX(5.89), '5,9×'); assert.equal(fmtX(0.2812), '0,28×');
+  // Spielablauf: Mensch gibt in jeder Runde die Lösung ab, Bot(s) raten
+  const players = [0, 1, 2].map((i) => ({ uid: 'p' + i, idx: i, name: 'S' + i, avatar: '🙂', colorHex: '#fff', isBot: i > 0, botLevel: i === 1 ? 'schwer' : 'leicht' }));
+  const ctx = { players, me: 'p0', seed: 5, sfx() {}, send() {}, rng: () => 0.5 };
+  const g = groesse.create(ctx); g.start();
+  const accSum = { p0: 0, p1: 0, p2: 0 };
+  for (let rd = 0; rd < 10; rd++) {
+    const R = g.R();
+    assert.equal(g.ph, 'pick');
+    g.onInput('p0', { a: 'abc' }); assert.equal(g.vals.p0, R.v0, 'ungültige Eingabe wird ignoriert');
+    g.onInput('p0', { a: vOf(R, R.truePx), ok: 1 });
+    g.onInput('p0', { a: 0, ok: 1 }); // nach dem Abschicken zählt nichts mehr
+    for (const b of players.slice(1)) { for (let k = 0; k < 400 && g.ph === 'pick'; k++) { const inp = g.botThink(b, {}, 0.05); if (inp) { g.onInput(b.uid, inp); break; } } }
+    assert.equal(g.ph, 'reveal', 'alle abgegeben → sofort Auflösung');
+    const snap = JSON.parse(JSON.stringify(g.snapshot()));
+    assert.ok(snap.res.acc[0] >= 99, 'exakte Lösung ≈ 100 %');
+    snap.res.acc.forEach((x, i) => { accSum['p' + i] += x; assert.ok(x >= 0 && x <= 100); });
+    g.update(REVEAL_T_TEST);
+  }
+  assert.equal(g.ph, 'over'); assert.ok(g.isFinished());
+  const res = g.result();
+  assert.equal(res.ranks.find((r) => r.uid === 'p0').rank, 1, 'Mensch mit exakten Lösungen gewinnt');
+  assert.ok(accSum.p1 > accSum.p2 * 0.9, 'schwerer Bot im Schnitt nicht schlechter als leichter: ' + accSum.p1 + ' vs ' + accSum.p2);
+  assert.match(res.ranks[0].label, /% Ø/);
 });
 
 console.log(`\n${n} Tests bestanden`);

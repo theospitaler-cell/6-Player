@@ -623,3 +623,11 @@ h1, h2, h3, p { margin: 0; }
   .w-card { font-size: 15px; }
   .w-key { font-size: 20px; }
 }
+
+/* ---------- Größen-Check ---------- */
+.gr-ui { justify-content: center; gap: 10px; }
+.gr-row { display: flex; align-items: center; gap: 8px; flex: none; }
+.gr-row .w-range { flex: 1; min-height: 52px; }
+.gr-nudge { flex: none; width: 54px; height: 54px; min-width: 54px; border-radius: 16px; font-size: 28px; }
+.gr-labels { display: flex; justify-content: space-between; color: var(--muted); font-size: 12px; margin-top: -4px; }
+.gr-ui .w-kbkey.send { min-height: 54px; }
