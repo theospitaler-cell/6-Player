@@ -3,10 +3,13 @@ import { h, sheet, toast, dialog, segmented, switchEl, avatarChip } from './ui.j
 import { sfx } from './audio.js';
 import { app, AVATARS, COLORS, BOT_LEVELS, BOT_LEVEL_LABEL, MAX_PLAYERS, TEAM_COLORS, CATEGORIES } from './state.js';
 import { profile, saveProfile } from './profile.js';
+import { ownedAvatars, FRAMES, ownsFrame, frameHex } from './shop.js';
 import { cleanName, toList } from './room.js';
 import { GAMES } from '../games/registry.js';
 import { gameFits } from './pool.js';
+import { CUPS, CUP_IDS, cupLabel } from './cups.js';
 import { copyText } from './util.js';
+import { inviteSheet } from './friendsui.js';
 
 export function inviteLink(code) {
   const base = location.href.split('#')[0].split('?')[0];
@@ -51,15 +54,18 @@ async function shareParty(code) {
 function editMeSheet(room) {
   const me = room.me;
   if (!me) return;
-  let name = me.name, avatar = me.avatar;
+  let name = me.name, avatar = me.avatar, frame = me.frame || 'weiss';
   const inp = h('input', { class: 'text-input', type: 'text', maxlength: '14', value: name, placeholder: 'Dein Name' });
   inp.addEventListener('input', () => { name = inp.value; });
   const avs = h('div', { class: 'av-grid' });
   const cols = h('div', { class: 'col-row' });
+  const frs = h('div', { class: 'col-row' });
   const o = { close: () => {} };
   const draw = () => {
     avs.innerHTML = '';
-    AVATARS.forEach((a) => avs.appendChild(h('button', { class: 'av-btn' + (a === avatar ? ' on' : ''), type: 'button', onclick: () => { avatar = a; draw(); } }, a)));
+    ownedAvatars().forEach((a) => avs.appendChild(h('button', { class: 'av-btn' + (a === avatar ? ' on' : ''), type: 'button', onclick: () => { avatar = a; draw(); } }, a)));
+    frs.innerHTML = '';
+    FRAMES.filter((f) => ownsFrame(f.frame)).forEach((f) => frs.appendChild(h('button', { class: 'col-btn frame-btn' + (f.frame === frame ? ' on' : ''), type: 'button', style: { borderColor: f.hex, background: 'rgba(0,0,0,.25)' }, 'aria-label': f.name, onclick: () => { frame = f.frame; draw(); } }, h('span', null, '○'))));
     cols.innerHTML = '';
     const taken = new Set(room.list().filter((p) => p.uid !== room.uid).map((p) => p.color));
     const cur = room.me ? room.me.color : me.color;
@@ -71,11 +77,11 @@ function editMeSheet(room) {
   draw();
   const save = h('button', { class: 'btn primary big', onclick: () => {
     const n = cleanName(name) || me.name;
-    profile.name = n; profile.avatar = avatar; saveProfile();
-    room.updateMe({ name: n, avatar });
+    profile.name = n; profile.avatar = avatar; profile.equipped.frame = frame; saveProfile();
+    room.updateMe({ name: n, avatar, frame });
     s.close();
   } }, 'Speichern');
-  const s = sheet('Dein Spieler', h('div', { class: 'edit-me' }, h('label', { class: 'lbl' }, 'Name'), inp, h('label', { class: 'lbl' }, 'Figur'), avs, h('label', { class: 'lbl' }, 'Farbe (jede nur einmal)'), cols, save));
+  const s = sheet('Dein Spieler', h('div', { class: 'edit-me' }, h('label', { class: 'lbl' }, 'Name'), inp, h('label', { class: 'lbl' }, 'Figur'), avs, h('label', { class: 'lbl' }, 'Farbe (jede nur einmal)'), cols, h('label', { class: 'lbl' }, 'Rahmen (aus dem Shop)'), frs, save));
 }
 
 function playerSheet(party, p) {
@@ -109,6 +115,16 @@ function poolSheet(room) {
   draw();
 }
 
+function cupSheet(room) {
+  const cur = room.settings().cup;
+  const body = h('div', { class: 'cup-grid' });
+  const sh = sheet('Themen-Cup', body);
+  const card = (id, emoji, name, desc) => h('button', { class: 'cup-card' + (cur === id ? ' on' : ''), type: 'button', onclick: () => { room.setSettings({ cup: id }); sh.close(); } },
+    h('div', { class: 'cup-emoji' }, emoji), h('div', { class: 'cup-name' }, name), h('div', { class: 'cup-desc' }, desc));
+  body.appendChild(card('frei', '🎲', 'Freie Auswahl', 'Alle Spiele laut Pool'));
+  for (const id of CUP_IDS) { const c = CUPS[id]; body.appendChild(card(id, c.emoji, c.name, c.desc)); }
+}
+
 function settingsPanel(party) {
   const room = party.room;
   const wrap = h('div', { class: 'settings' });
@@ -123,17 +139,21 @@ function settingsPanel(party) {
     const row = (label, ctl) => wrap.appendChild(h('div', { class: 'set-row' }, h('div', { class: 'set-label' }, label), ctl));
     const seg = (opts, val, key2) => segmented(opts, val, (v) => room.setSettings({ [key2]: v }), { disabled: !host });
     const sw = (val, key2) => switchEl(val, (v) => room.setSettings({ [key2]: v }));
+    const yn = (val) => h('b', null, val ? 'Ja' : 'Nein');
     if (!host) wrap.classList.add('ro'); else wrap.classList.remove('ro');
-    row('Spielauswahl', seg([{ value: 'admin', label: 'Admin wählt' }, { value: 'vote', label: 'Abstimmung' }, { value: 'random', label: 'Zufall' }], s.mode, 'mode'));
-    row('Party-Typ', seg([{ value: 'cup', label: '🏆 Cup' }, { value: 'free', label: '♾️ Freies Spiel' }], s.partyType, 'partyType'));
-    if (s.partyType === 'cup') row('Runden im Cup', seg([3, 5, 7, 10].map((n) => ({ value: n, label: String(n) })), s.rounds, 'rounds'));
-    row('Jedes Spiel nur einmal', host ? sw(s.onlyOnce, 'onlyOnce') : h('b', null, s.onlyOnce ? 'Ja' : 'Nein'));
-    row('Teams', seg([{ value: 'aus', label: 'Zufällig' }, { value: 'zufall', label: 'Pro Runde' }, { value: 'fest', label: 'Fest' }], s.teamMode, 'teamMode'));
-    row('Bots auffüllen (bis 4)', host ? sw(s.fillBots, 'fillBots') : h('b', null, s.fillBots ? 'Ja' : 'Nein'));
+    const ko = s.partyType === 'ko', cup = s.partyType === 'cup';
+    row('Party-Typ', seg([{ value: 'cup', label: '🏆 Cup' }, { value: 'ko', label: '⚔️ K.-o.' }, { value: 'free', label: '♾️ Frei' }], s.partyType, 'partyType'));
+    if (!ko) row('Spielauswahl', seg([{ value: 'admin', label: 'Admin wählt' }, { value: 'vote', label: 'Abstimmung' }, { value: 'random', label: 'Zufall' }], s.mode, 'mode'));
+    if (cup) row('Runden im Cup', seg([3, 5, 7, 10].map((n) => ({ value: n, label: String(n) })), s.rounds, 'rounds'));
+    if (!ko) row('Themen-Cup', h('button', { class: 'btn small', onclick: () => (host ? cupSheet(room) : toast('Nur der Admin kann das Thema ändern.')) }, `${cupLabel(s.cup)} ›`));
+    if (!ko) row('Jedes Spiel nur einmal', host ? sw(s.onlyOnce, 'onlyOnce') : yn(s.onlyOnce));
+    if (!ko) row('Teams', seg([{ value: 'aus', label: 'Zufällig' }, { value: 'zufall', label: 'Pro Runde' }, { value: 'fest', label: 'Fest' }], s.teamMode, 'teamMode'));
+    row('Bots auffüllen (bis 4)', host ? sw(s.fillBots, 'fillBots') : yn(s.fillBots));
     row('Bot-Stärke', seg(BOT_LEVELS.map((l) => ({ value: l, label: BOT_LEVEL_LABEL[l] })), s.botLevel, 'botLevel'));
-    row('Bot übernimmt bei Verbindungsverlust', host ? sw(s.botTakeover, 'botTakeover') : h('b', null, s.botTakeover ? 'Ja' : 'Nein'));
+    row('Bot übernimmt bei Verbindungsverlust', host ? sw(s.botTakeover, 'botTakeover') : yn(s.botTakeover));
     row('Spielzeit', seg([{ value: 0.75, label: 'Kurz' }, { value: 1, label: 'Normal' }, { value: 1.5, label: 'Lang' }], s.timeFactor, 'timeFactor'));
-    row('Doppelte Punkte im Finale', host ? sw(s.doubleFinal, 'doubleFinal') : h('b', null, s.doubleFinal ? 'Ja' : 'Nein'));
+    row('Farb-Gedächtnis: Anzeigedauer', seg([1, 2, 3, 4, 5].map((n) => ({ value: n, label: n + ' s' })), s.colorMemorySec, 'colorMemorySec'));
+    if (cup) row('Doppelte Punkte im Finale', host ? sw(s.doubleFinal, 'doubleFinal') : yn(s.doubleFinal));
     const nOff = Object.keys(s.off).length + Object.keys(s.offCats).length;
     row('Spiele-Pool', h('button', { class: 'btn small', onclick: () => host ? poolSheet(room) : toast('Nur der Admin kann den Pool ändern.') }, `${GAMES.length - Object.keys(s.off).length} Spiele${nOff ? ' (angepasst)' : ''} ›`));
   };
@@ -163,6 +183,7 @@ export function lobbyScreen(party) {
         h('div', { class: 'code-digits' }, code.split('').map((d) => h('span', null, d))),
         h('div', { class: 'code-btns' },
           h('button', { class: 'btn small', onclick: () => shareParty(code) }, '📤 Einladen'),
+          app.online ? h('button', { class: 'btn small', onclick: () => inviteSheet(code) }, '👥 Freunde') : null,
           h('button', { class: 'btn small', onclick: () => showQr(code) }, '▦ QR'),
           h('button', { class: 'btn small', onclick: async () => { toast((await copyText(inviteLink(code))) ? 'Link kopiert 📋' : 'Kopieren nicht möglich'); } }, '🔗 Link'))),
       botRow,
@@ -184,7 +205,7 @@ export function lobbyScreen(party) {
         onclick: (e) => { e.stopPropagation(); room.setPlayer(p.uid, { team: p.team === 0 ? 1 : 0 }); } }, p.team === 0 ? 'Team 🔴' : p.team === 1 ? 'Team 🔵' : 'Team ?')
       : null;
     return h('div', { class: 'p-card' + (mine ? ' me' : '') + (p.connected === false ? ' off' : ''), style: { '--pc': p.colorHex }, onclick: () => { if (mine) editMeSheet(room); else if (room.isHost) playerSheet(party, p); } },
-      h('div', { class: 'p-avatar', style: { background: p.colorHex } }, p.avatar, host ? h('span', { class: 'crown' }, '👑') : null),
+      h('div', { class: 'p-avatar' + (p.frame === 'regenbogen' ? ' rainbow' : ''), style: { background: p.colorHex, borderColor: frameHex(p.frame) } }, p.avatar, host ? h('span', { class: 'crown' }, '👑') : null),
       h('div', { class: 'p-name' }, p.name),
       h('div', { class: 'p-sub' }, p.isBot ? `🤖 ${BOT_LEVEL_LABEL[p.botLevel] || ''}` : `Lv ${p.level || 1}`),
       h('div', { class: 'p-status' }, p.connected === false ? '📡 offline' : (p.isBot || p.ready || host ? '✅ bereit' : '⏳ nicht bereit')),

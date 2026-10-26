@@ -10,6 +10,8 @@ import { app } from './state.js';
 import { startMusic, stopMusic, sfx } from './audio.js';
 import { toList, Room } from './room.js';
 import { standings } from './scoring.js';
+import { track, updateHighscore } from './progress.js';
+import { announce } from './profileui.js';
 
 export class Party {
   constructor(room, { solo = false, onExit = () => {} } = {}) {
@@ -62,6 +64,7 @@ export class Party {
       case 'playing': this.renderGame(m); break;
       case 'result': mountScreen('result', () => scr.resultScreen(this)); break;
       case 'scoreboard': mountScreen('scoreboard', () => scr.scoreboardScreen(this)); break;
+      case 'bracket': mountScreen('bracket', () => scr.bracketScreen(this)); break;
       case 'finished': mountScreen('finished', () => scr.finishedScreen(this)); break;
       default: break;
     }
@@ -94,7 +97,7 @@ export class Party {
   // ------------------------------------------------------------------ XP & Münzen
   checkRewards(m) {
     const room = this.room;
-    if (m.status === 'result' && !m.stechen) {
+    if (m.status === 'result' && !m.stechen && !m.koCur) {
       const k = `${m.partyId}:${m.roundIndex}`;
       const rec = room.roundRecord(m.roundIndex);
       if (this.rewarded !== k && rec) {
@@ -107,6 +110,9 @@ export class Party {
             profile.stats.rounds++; if (r.rank === 1) profile.stats.roundWins++;
             saveProfile();
             this.reward = { key: k, round: m.roundIndex, xp: rw.xp, coins: rw.coins };
+            const g = byId[rec.g];
+            if (this.solo && g && r.v != null && updateHighscore(g.id, r.v, r.l)) this.reward.hs = true;
+            announce(track('round', { rank: r.rank, n: toList(rec.ranks).length, gameId: rec.g, category: g && g.category, solo: this.solo }));
             sfx(r.rank === 1 ? 'win' : 'coin');
             if (res.leveledUp) setTimeout(() => toast(`⭐ Level ${res.level}! Glückwunsch!`, 3500), 600);
           }
@@ -115,7 +121,9 @@ export class Party {
     }
     if (m.status === 'finished' && m.partyId && profile.lastParty !== m.partyId && !this.solo) {
       profile.lastParty = m.partyId;
-      const table = standings(room.list().map((p) => ({ uid: p.uid, score: p.score, wins: p.wins, rs: p.rs })), toList(m.stechenOrder));
+      const table = m.koPlace
+        ? room.list().map((p) => ({ uid: p.uid, place: m.koPlace[p.uid] != null ? m.koPlace[p.uid] : room.list().length }))
+        : standings(room.list().map((p) => ({ uid: p.uid, score: p.score, wins: p.wins, rs: p.rs })), toList(m.stechenOrder));
       const mine = table.find((p) => p.uid === room.uid);
       if (mine) {
         const rw = partyReward(mine.place, table.length);
@@ -123,6 +131,7 @@ export class Party {
         profile.stats.parties++; if (mine.place === 1) profile.stats.wins++;
         saveProfile();
         this.reward = { key: 'p' + m.partyId, party: true, xp: rw.xp, coins: rw.coins };
+        announce(track('party', { place: mine.place, n: table.length, humans: room.humans().length, ko: !!m.koPlace }));
         if (res.leveledUp) setTimeout(() => toast(`⭐ Level ${res.level}!`, 3500), 900);
       }
     }

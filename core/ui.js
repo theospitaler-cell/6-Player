@@ -1,5 +1,6 @@
 // UI-Bausteine: DOM-Helfer, Screens, Toasts, Dialoge, Bottom-Sheets, Konfetti.
 import { sfx, vibrate } from './audio.js';
+import { FRAME_BY_ID } from './shop.js';
 
 /** Mini-Hyperscript: h('div', {class:'x', onclick: fn}, 'Text', child, ...) */
 export function h(tag, props, ...kids) {
@@ -174,8 +175,9 @@ export function floatEmoji(emoji, color) {
 
 // ---------- Kleine Bausteine ----------
 export function avatarChip(p, { size = 44, ring = true } = {}) {
+  const f = FRAME_BY_ID[p.frame] || FRAME_BY_ID.weiss;
   return h('div', {
-    class: 'avatar', style: { width: size + 'px', height: size + 'px', fontSize: size * 0.58 + 'px', background: p.colorHex, borderColor: ring ? '#fff' : 'transparent' },
+    class: 'avatar' + (f.rainbow && ring ? ' rainbow' : ''), style: { width: size + 'px', height: size + 'px', fontSize: size * 0.58 + 'px', background: p.colorHex, borderColor: ring ? f.hex : 'transparent' },
   }, p.avatar);
 }
 

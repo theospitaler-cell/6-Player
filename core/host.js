@@ -7,6 +7,7 @@ import { selectionPool } from './pool.js';
 import { normalizeResult, cupPoints, duelPoints, scaleScores, assignTeams, selectDuelPlayers, tiedTop } from './scoring.js';
 import { randInt, shuffle, randId } from './util.js';
 import { toList } from './room.js';
+import { makeBracket, nextMatch, recordGame, placements, readBracket, setWinner, resolveByes } from './ko.js';
 
 export class HostDriver {
   /** hooks: { hasHostRunner(meta) → bool, onError(err), onNotice(text) } */
@@ -38,7 +39,14 @@ export class HostDriver {
     switch (m.status) {
       case 'voting': return this.tickVote(m, now);
       case 'rolling': if (m.pick && now >= m.pick.until) this.run(() => this.startRound(m.pick.gameId)); return;
-      case 'intro': if (now >= (m.phaseUntil || 0)) this.run(() => this.beginPlay()); return;
+      case 'intro': {
+        // alle Menschen haben „Überspringen“ getippt → sofort weiter
+        const hum = this.room.humans().filter((p) => p.connected !== false), votes = this.room.d.votes || {};
+        const allSkip = hum.length > 0 && hum.every((p) => votes[p.uid] === 'skip');
+        if (allSkip || now >= (m.phaseUntil || 0)) this.run(() => this.beginPlay());
+        return;
+      }
+      case 'bracket': if (now >= (m.phaseUntil || 0)) this.run(() => this.afterBracket()); return;
       case 'playing': return this.tickPlaying(m, now);
       case 'result': if (now >= (m.phaseUntil || 0)) this.run(() => this.afterResult()); return;
       case 'scoreboard': if (now >= (m.phaseUntil || 0)) this.run(() => this.afterScoreboard()); return;
@@ -90,10 +98,11 @@ export class HostDriver {
     const o = {
       'meta/roundIndex': 0, 'meta/totalRounds': s.partyType === 'free' ? 0 : s.rounds, 'meta/played': null, 'meta/stechen': null,
       'meta/stechenOrder': null, 'meta/partyId': randId(8), 'meta/vote': null, 'meta/pick': null, 'meta/gameId': null,
-      inputs: null, state: null, votes: null, submits: null, history: null,
+      inputs: null, state: null, votes: null, submits: null, history: null, chan: null,
     };
     for (const p of room.list()) { o[`players/${p.uid}/score`] = 0; o[`players/${p.uid}/wins`] = 0; o[`players/${p.uid}/rs`] = 0; }
     await this.upd(o);
+    if (s.partyType === 'ko') { await this.startKo(); return; }
     await this.beginSelection();
   }
 
@@ -125,8 +134,9 @@ export class HostDriver {
     }
     if (pool.length === 1) { await this.upd(base); await this.startRound(pool[0].id, { played: reset ? [] : undefined }); return; }
     const now = this.now();
-    if (s.mode === 'admin') { await this.upd({ ...base, 'meta/status': 'picking' }); return; }
-    if (s.mode === 'random') {
+    const mode = s.cup && s.cup !== 'frei' ? 'random' : s.mode; // Themen-Cup: Reihenfolge zufällig
+    if (mode === 'admin') { await this.upd({ ...base, 'meta/status': 'picking' }); return; }
+    if (mode === 'random') {
       const choice = pool[randInt(0, pool.length - 1)].id;
       const reel = shuffle(GAMES.map((g) => g.id)).slice(0, 9).filter((id) => id !== choice).concat(choice);
       await this.upd({ ...base, 'meta/status': 'rolling', 'meta/pick': { gameId: choice, reel, until: now + TIMING.roll } });
@@ -165,6 +175,7 @@ export class HostDriver {
     const rng = Math.random;
     let parts;
     if (opts.uids) parts = opts.uids.slice();
+    else if (game.humansOnly) parts = active.filter((p) => !p.isBot).map((p) => p.uid).slice(0, game.max); // Bots können hier nicht mitspielen
     else if (game.duel && game.max < active.length) parts = selectDuelPlayers(active.map((p) => ({ uid: p.uid, score: p.score || 0 })), game.max, rng);
     else if (game.max < active.length) parts = shuffle(active.map((p) => p.uid)).slice(0, game.max);
     else parts = active.map((p) => p.uid);
@@ -179,8 +190,8 @@ export class HostDriver {
       'meta/status': 'intro', 'meta/gameId': gameId, 'meta/seed': randInt(1, 2147483646), 'meta/participants': parts, 'meta/teams': teams,
       'meta/duration': Math.max(8, Math.round(game.duration * s.timeFactor)), 'meta/phaseUntil': this.now() + TIMING.intro,
       'meta/startAt': null, 'meta/vote': null, 'meta/pick': null, 'meta/activeN': active.length, 'meta/roundIndex': roundIndex,
-      'meta/stechen': opts.stechen ? true : null,
-      inputs: null, state: null, votes: null, [`submits/${roundIndex}`]: null,
+      'meta/stechen': opts.stechen ? true : null, 'meta/koCur': opts.koCur || null,
+      inputs: null, state: null, votes: null, [`submits/${roundIndex}`]: null, [`chan/${roundIndex}`]: null,
     };
     if (!opts.stechen) o['meta/played'] = [...played, gameId];
     await this.upd(o);
@@ -194,7 +205,7 @@ export class HostDriver {
   async restartRound() {
     const m = this.room.meta;
     if (m.status !== 'playing') return;
-    await this.upd({ inputs: null, state: null, [`submits/${m.roundIndex}`]: null, 'meta/startAt': this.now() + TIMING.countdown });
+    await this.upd({ inputs: null, state: null, [`submits/${m.roundIndex}`]: null, [`chan/${m.roundIndex}`]: null, 'meta/startAt': this.now() + TIMING.countdown });
   }
 
   /** Vom Runner (oder dem Sicherheitsnetz) aufgerufen. res = {ranks:[…], teamRanks?} oder null (ungültig). */
@@ -215,6 +226,7 @@ export class HostDriver {
     let ranks = null, valid = !!res;
     try { if (res) ranks = normalizeResult(res, parts); } catch (e) { console.error('Ergebnis ungültig', e); valid = false; }
     if (!ranks) valid = false;
+    if (m.koCur) { await this.finishKoGame(m, valid, ranks, n); return; }
     let pts = {};
     const isLast = s.partyType === 'cup' && (m.roundIndex || 0) + 1 >= (m.totalRounds || 0) && !stechen;
     if (valid && !stechen) {
@@ -252,6 +264,7 @@ export class HostDriver {
     const room = this.room, m = room.meta, s = room.settings();
     if (m.status !== 'result') return;
     if (m.stechen) { await this.finishParty(); return; }
+    if (m.koCur) { await room.setMeta({ status: 'bracket', phaseUntil: this.now() + TIMING.bracket, roundIndex: (m.roundIndex || 0) + 1 }); return; }
     if (s.partyType === 'free') { await room.setMeta({ roundIndex: (m.roundIndex || 0) + 1 }); await this.beginSelection(); return; }
     await room.setMeta({ status: 'scoreboard', phaseUntil: this.now() + TIMING.scoreboard });
   }
@@ -279,6 +292,7 @@ export class HostDriver {
   async abortRound() {
     const room = this.room, m = room.meta;
     if (!['intro', 'playing'].includes(m.status)) return;
+    if (m.koCur) { await this.upd({ inputs: null, state: null, [`submits/${m.roundIndex}`]: null, [`chan/${m.roundIndex}`]: null }); await this.beginKoGame(); return; }
     const played = toList(m.played).filter((g) => g !== m.gameId);
     await this.upd({ 'meta/played': played.length ? played : null, inputs: null, state: null, [`submits/${m.roundIndex}`]: null });
     await this.beginSelection();
@@ -287,6 +301,73 @@ export class HostDriver {
   async endParty() {
     const m = this.room.meta;
     if (m.status === 'lobby') return;
+    if (m.koCur || m.ko) { const br = readBracket(m.ko); if (br) { await this.finishKo(br); return; } }
     if (this.room.d.history.length) await this.finishParty(); else await this.toLobby();
+  }
+
+  // ------------------------------------------------------------------ K.-o.-Turnier
+  koPool() {
+    const s = this.room.settings();
+    return GAMES.filter((g) => g.min <= 2 && g.max >= 2 && !g.humansOnly && g.category !== 'Koop' && !(s.off && s.off[g.id]) && !(s.offCats && s.offCats[g.category]));
+  }
+
+  async startKo() {
+    const room = this.room;
+    if (!this.koPool().length) throw new Error('Für das K.-o.-Turnier ist kein Spiel für 2 Spieler freigeschaltet – prüfe den Spiele-Pool.');
+    const seeded = room.active().map((p) => ({ uid: p.uid, lvl: p.level || 1, r: Math.random() })).sort((a, b) => b.lvl - a.lvl || a.r - b.r).map((x) => x.uid);
+    const br = makeBracket(seeded);
+    await this.upd({ 'meta/ko': br, 'meta/koCur': null, 'meta/koPlace': null, 'meta/status': 'bracket', 'meta/phaseUntil': this.now() + TIMING.bracket, 'meta/totalRounds': 0 });
+  }
+
+  async afterBracket() {
+    if (this.room.meta.status !== 'bracket') return;
+    await this.beginKoGame();
+  }
+
+  async beginKoGame() {
+    const room = this.room, m = room.meta;
+    const br = readBracket(m.ko);
+    const nm = br && nextMatch(br);
+    if (!nm) { await this.finishKo(br); return; }
+    const mt = br.rounds[nm.r][nm.m];
+    const pa = room.player(mt.a), pb = room.player(mt.b);
+    if (!pa || !pb) { // wer gegangen ist, verliert kampflos
+      setWinner(br, nm.r, nm.m, pa ? mt.a : (pb ? mt.b : '-'), true);
+      resolveByes(br);
+      await this.upd({ 'meta/ko': br });
+      await this.beginKoGame();
+      return;
+    }
+    const used = mt.gs ? mt.gs.split(',') : [];
+    const pool = this.koPool();
+    const fresh = pool.filter((g) => !used.includes(g.id));
+    const list = fresh.length ? fresh : pool;
+    const g = list[randInt(0, list.length - 1)];
+    await this.startRound(g.id, { uids: [mt.a, mt.b], koCur: `${nm.r}:${nm.m}` });
+  }
+
+  async finishKoGame(m, valid, ranks, n) {
+    const [r, mi] = String(m.koCur).split(':').map(Number);
+    const br = readBracket(m.ko);
+    const mt = br.rounds[r][mi];
+    let side = -1;
+    if (valid && ranks) { const top = ranks.filter((x) => x.rank === 1); if (top.length === 1) side = top[0].uid === mt.a ? 0 : 1; }
+    recordGame(br, r, mi, side, m.gameId);
+    const o = {
+      [`history/${m.roundIndex}`]: {
+        g: m.gameId, valid, st: 0, fin: 0, n,
+        ranks: valid ? ranks.map((x) => ({ uid: x.uid, rank: x.rank, v: x.value ?? null, l: x.label || '' })) : null, pts: null,
+        ko: { r, m: mi, a: mt.a, b: mt.b, wa: mt.wa, wb: mt.wb, w: mt.w },
+      },
+      'meta/ko': br, 'meta/status': 'result', 'meta/phaseUntil': this.now() + TIMING.result,
+    };
+    await this.upd(o);
+  }
+
+  async finishKo(br) {
+    const pl = br ? placements(br) : {};
+    const o = { 'meta/koPlace': pl, 'meta/status': 'finished', 'meta/phaseUntil': null, 'meta/koCur': null };
+    if (br) o['meta/ko'] = br;
+    await this.upd(o);
   }
 }

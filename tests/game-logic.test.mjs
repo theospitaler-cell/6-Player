@@ -12,6 +12,13 @@ import { LocalTransport } from '../core/transport.js';
 import { Room } from '../core/room.js';
 import { HostDriver } from '../core/host.js';
 import { toList } from '../core/room.js';
+import { movesFor, applyMove } from '../games/dame.js';
+import { sow } from '../games/mancala.js';
+import { profile } from '../core/profile.js';
+import { track, ensureMissions, claimMission, ACHIEVEMENTS, updateHighscore, MISSIONS } from '../core/progress.js';
+import { buy, FIGURES, owns, ownsAvatar } from '../core/shop.js';
+import { Friends, normCode, showCode, agoText } from '../core/friends.js';
+import { seedOrder, makeBracket, nextMatch, recordGame, placements, roundName, readBracket } from '../core/ko.js';
 
 let n = 0;
 const t = async (name, fn) => { await fn(); n++; console.log('  ✓', name); };
@@ -154,6 +161,117 @@ async function waitFor(fn, ms = 20000, step = 25) {
   throw new Error('waitFor timeout');
 }
 
+await t('Dame: Startaufstellung, Schlagzwang, Mehrfachsprung und Beförderung', () => {
+  const start = Array(64).fill(0);
+  for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++) if ((r + c) % 2 === 1) { if (r < 3) start[r * 8 + c] = 3; else if (r > 4) start[r * 8 + c] = 1; }
+  assert.equal(start.filter((v) => v === 1).length, 12);
+  assert.equal(movesFor(start, 0).length, 7, 'Spieler 0 hat 7 Eröffnungszüge');
+  // Schlagzwang: Stein bei (5,2) gegen Gegner bei (4,3) mit freiem Feld (3,4)
+  const b = Array(64).fill(0);
+  b[5 * 8 + 2] = 1; b[4 * 8 + 3] = 3; b[7 * 8 + 0] = 1;
+  const ms = movesFor(b, 0);
+  assert.ok(ms.length === 1 && ms[0].cap === 4 * 8 + 3, 'nur der Schlagzug ist erlaubt');
+  // Mehrfachsprung: zweiter Gegner bei (2,5) → nach dem ersten Sprung auf (3,4) geht es weiter nach (1,6)
+  b[2 * 8 + 5] = 3;
+  const r1 = applyMove(b, ms[0]);
+  assert.equal(r1.cont, 3 * 8 + 4, 'muss weiterspringen');
+  const ms2 = movesFor(r1.b, 0, r1.cont);
+  assert.equal(ms2.length, 1);
+  const r2 = applyMove(r1.b, ms2[0]);
+  assert.equal(r2.b[1 * 8 + 6] === 1 && r2.b[2 * 8 + 5] === 0, true);
+  // Beförderung
+  const p = Array(64).fill(0); p[1 * 8 + 2] = 1; p[7 * 8 + 6] = 3;
+  const pm = movesFor(p, 0).find((m) => m.to === 0 * 8 + 1 || m.to === 0 * 8 + 3);
+  assert.equal(applyMove(p, pm).b[pm.to], 2, 'Stein wird Dame');
+});
+
+await t('Mancala: Extra-Zug im Kalaha, Fangen gegenüberliegender Steine, Spielende sammelt Reste', () => {
+  const start = [4, 4, 4, 4, 4, 4, 0, 4, 4, 4, 4, 4, 4, 0];
+  const r = sow(start, 0, 2); // 4 Steine: Mulden 3,4,5 und Kalaha
+  assert.equal(r.extra, true);
+  assert.equal(r.b[6], 1);
+  // Fangen: Mulde 0 hat 1 Stein → landet in der leeren Mulde 1; gegenüber (Mulde 11) liegen 5 Steine
+  const t2 = [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 0, 0];
+  const rc = sow(t2, 0, 0);
+  assert.equal(rc.b[6], 6, '5 gegnerische + 1 eigener Stein im Kalaha');
+  assert.equal(rc.b[11], 0);
+  // Spielende
+  const end = [0, 0, 0, 0, 0, 1, 0, 3, 0, 0, 0, 0, 0, 2];
+  const re = sow(end, 0, 5);
+  assert.equal(re.over, true);
+  assert.equal(re.b[6] + re.b[13], 6, 'alle Steine landen in den Kalahas');
+});
+
+await t('K.-o.-Turnier: Setzliste, Freilose, Best-of-3, Platzierung (2 bis 6 Spieler)', () => {
+  assert.deepEqual(seedOrder(8), [1, 8, 4, 5, 2, 7, 3, 6]);
+  assert.deepEqual(seedOrder(4), [1, 4, 2, 3]);
+  for (let n = 2; n <= 6; n++) {
+    const uids = Array.from({ length: n }, (_, i) => 'p' + (i + 1));
+    const br = makeBracket(uids);
+    let guard = 0, nm;
+    while ((nm = nextMatch(br)) && guard++ < 50) {
+      const mt = br.rounds[nm.r][nm.m];
+      // der niedriger gesetzte (kleinere Zahl) gewinnt immer 2:0
+      const aWins = Number(mt.a.slice(1)) < Number(mt.b.slice(1));
+      assert.equal(recordGame(br, nm.r, nm.m, aWins ? 0 : 1, 'x'), false);
+      assert.equal(recordGame(br, nm.r, nm.m, aWins ? 0 : 1, 'y'), true);
+    }
+    const pl = placements(br);
+    assert.equal(Object.keys(pl).length, n, `alle ${n} Spieler platziert`);
+    assert.equal(pl.p1, 1, 'Topgesetzter gewinnt');
+    assert.equal(pl.p2, 2);
+  }
+  // 6 Spieler → Größe 8, die zwei Topgesetzten haben ein Freilos
+  const b6 = makeBracket(['a', 'b', 'c', 'd', 'e', 'f']);
+  assert.equal(b6.size, 8);
+  assert.equal(b6.rounds[0].filter((m) => m.bye).length, 2);
+  assert.equal(roundName(8, 0), 'Viertelfinale'); assert.equal(roundName(8, 1), 'Halbfinale'); assert.equal(roundName(8, 2), 'Finale'); assert.equal(roundName(2, 0), 'Finale');
+  // Unentschieden zählt nicht; nach 5 Spielen entscheidet das Los
+  const b2 = makeBracket(['x', 'y']);
+  for (let i = 0; i < 4; i++) assert.equal(recordGame(b2, 0, 0, -1, 'g' + i), false);
+  assert.equal(recordGame(b2, 0, 0, -1, 'g4', () => 0.1), true);
+  assert.ok(b2.rounds[0][0].w);
+  // Round-Trip durch die Datenbank-Form (Arrays als Objekte)
+  const asObj = JSON.parse(JSON.stringify({ size: b6.size, rounds: Object.fromEntries(b6.rounds.map((r, i) => [i, Object.fromEntries(r.map((m, j) => [j, m]))])) }));
+  assert.equal(readBracket(asObj).rounds[0].length, 4);
+});
+
+await t('Fortschritt: Erfolge, Tagesmissionen (3 pro Tag, abholbar), Highscores, Shop-Kauf', () => {
+  profile.coins = 0; profile.counters = {}; profile.achieved = {}; profile.highscores = {}; profile.missions = null; profile.unlocked = {};
+  const ms = ensureMissions('2026-01-01');
+  assert.equal(ms.list.length, 3);
+  assert.equal(ensureMissions('2026-01-01').list[0].id, ms.list[0].id, 'am selben Tag bleiben es dieselben');
+  assert.notEqual(JSON.stringify(ensureMissions('2026-01-02').list.map((m) => m.id)), 'x');
+  // 5 Runden, zuletzt 3 Siege hintereinander
+  let got = [];
+  for (const rank of [2, 1, 1, 1, 3]) got = got.concat(track('round', { rank, n: 4, gameId: 'g' + rank + Math.random(), category: 'Arena', solo: false }).achievements.map((a) => a.id));
+  assert.ok(got.includes('r1') && got.includes('w1') && got.includes('streak3'), 'Erfolge: ' + got.join(','));
+  assert.ok(profile.coins >= 25 + 20 + 60, 'Münzen für Erfolge gutgeschrieben: ' + profile.coins);
+  // Mission erledigen und abholen: alle Missionen künstlich auf „fertig“ bringen
+  const day = ensureMissions();
+  day.list.forEach((m) => { m.progress = MISSIONS[m.id].target; m.done = true; });
+  const before = profile.coins;
+  assert.ok(claimMission(day.list[0].id) > 0);
+  assert.equal(claimMission(day.list[0].id), 0, 'nur einmal abholbar');
+  assert.ok(profile.coins > before);
+  // Highscores
+  assert.equal(updateHighscore('quiz', 50, '5 richtig'), true);
+  assert.equal(updateHighscore('quiz', 40, 'schlechter'), false);
+  assert.equal(updateHighscore('schnellzieher', 900, 'Ø 300 ms'), true);
+  assert.equal(updateHighscore('schnellzieher', 1200, 'langsamer'), false, 'niedriger ist besser');
+  assert.equal(updateHighscore('tictactoe', 1, 'x'), false, 'Spiel ohne Highscore');
+  // Shop
+  profile.coins = 50;
+  const fig = FIGURES[0];
+  assert.equal(buy(fig).ok, false, 'zu wenig Münzen');
+  profile.coins = 500;
+  assert.equal(buy(fig).ok, true);
+  assert.equal(buy(fig).ok, false, 'schon gekauft');
+  assert.equal(profile.coins, 500 - fig.price);
+  assert.ok(owns(fig.id) && ownsAvatar(fig.emoji));
+  assert.ok(ACHIEVEMENTS.length >= 20);
+});
+
 await t('Host-Treiber: kompletter Cup (3 Runden) mit 1 Mensch + 3 Bots, Punkte stimmen, Siegerehrung', async () => {
   const tp = new LocalTransport({ shared: false }); await tp.init();
   const room = await Room.create(tp, { name: 'Test', avatar: '🙂', color: 'red', level: 1 });
@@ -214,6 +332,43 @@ await t('Host-Treiber: Abstimmungs-Modus – Bots stimmen, Gewinner startet die 
   room.stop();
 });
 
+await t('Host-Treiber: K.-o.-Turnier mit 1 Mensch + 4 Bots läuft bis zur Siegerehrung (Platzierungen vollständig)', async () => {
+  const tp = new LocalTransport({ shared: false }); await tp.init();
+  const room = await Room.create(tp, { name: 'Test', avatar: '🙂', color: 'red', level: 9 });
+  await room.setSettings({ partyType: 'ko' });
+  for (let i = 0; i < 4; i++) await room.addBot('mittel');
+  const driver = new HostDriver(room, { hasHostRunner: () => true });
+  const origNow = driver.now.bind(driver);
+  let skew = 0;
+  driver.now = () => origNow() + skew;
+  driver.start();
+  let handled = '';
+  const matches = [];
+  const fake = setInterval(() => {
+    const m = room.meta;
+    if (!m) return;
+    if (m.status !== 'playing') { skew += 500; return; }
+    const key = m.roundIndex + ':' + m.startAt;
+    if (handled === key) return;
+    handled = key;
+    const parts = toList(m.participants);
+    assert.equal(parts.length, 2, 'im K.-o. spielen genau zwei');
+    matches.push(m.koCur);
+    // der Mensch gewinnt immer, sonst der Erste in der Liste
+    const win = parts.includes(room.uid) ? room.uid : parts[0];
+    driver.onGameEnd({ ranks: parts.map((u) => ({ uid: u, rank: u === win ? 1 : 2 })) });
+  }, 30);
+  await driver.run(() => driver.startParty());
+  assert.equal(room.meta.status, 'bracket');
+  await waitFor(() => room.meta.status === 'finished', 40000);
+  clearInterval(fake); driver.stop();
+  const pl = room.meta.koPlace;
+  assert.equal(Object.keys(pl).length, 5, 'alle fünf platziert');
+  assert.equal(pl[room.uid], 1, 'der Mensch hat durchgehend gewonnen');
+  assert.ok(matches.length >= 8, 'Best-of-3: mindestens 2 Spiele pro Match, ' + matches.length);
+  room.stop();
+});
+
 await t('Host-Treiber: Gleichstand an der Spitze löst das Stechen im Schnellzieher aus', async () => {
   const tp = new LocalTransport({ shared: false }); await tp.init();
   const room = await Room.create(tp, { name: 'Test', avatar: '🙂', color: 'red', level: 1 });
@@ -244,6 +399,84 @@ await t('Host-Treiber: Gleichstand an der Spitze löst das Stechen im Schnellzie
   assert.deepEqual(stechenSeen, ['schnellzieher']);
   assert.equal(toList(room.meta.stechenOrder).length, 2);
   room.stop();
+});
+
+await t('Freunde: Code, Anfrage, Annehmen, Anwesenheit, Einladung, Entfernen', async () => {
+  const tpA = new LocalTransport({ shared: false }); await tpA.init();
+  const mk = (uid) => { const tp = Object.create(tpA); tp.uid = uid; return tp; }; // gleiche Datenbank, andere Nutzer
+  const tpB = mk('uB'), tpC = mk('uC');
+  tpA.uid = 'uA';
+  const prof = (name, avatar) => ({ name, avatar, color: 'red', xp: 0, equipped: { frame: 'weiss' }, friendCode: null });
+  const pa = prof('Anna', '🦊'), pb = prof('Ben', '🐸'), pc = prof('Cleo', '🐱');
+  const fa = new Friends(pa), fb = new Friends(pb), fc = new Friends(pc);
+  const ev = { a: [], b: [] };
+  fa.on((w, d) => ev.a.push([w, d])); fb.on((w, d) => ev.b.push([w, d]));
+  await fa.start(tpA); await fb.start(tpB); await fc.start(tpC);
+  assert.match(pa.friendCode, /^[A-HJ-NP-Z2-9]{6}$/);
+  assert.notEqual(pa.friendCode, pb.friendCode);
+  assert.equal(await tpA.get('friendCodes/' + pa.friendCode), 'uA');
+  assert.equal(normCode(' k7m-4px '), 'K7M4PX'); assert.equal(showCode('K7M4PX'), 'K7M-4PX');
+  // Fehlerfälle
+  assert.equal((await fa.addByCode('abc')).ok, false);
+  assert.match((await fa.addByCode(pa.friendCode)).reason, /eigener/);
+  assert.match((await fa.addByCode('ZZZZZZ')).reason, /gibt es nicht/);
+  // Anfrage Anna → Ben
+  assert.equal((await fa.addByCode(showCode(pb.friendCode))).ok, true);
+  await new Promise((r) => setTimeout(r, 30));
+  assert.equal(fb.requestList().length, 1);
+  assert.equal(fb.requestList()[0].name, 'Anna');
+  assert.equal(fb.badge(), 1);
+  assert.ok(ev.b.some(([w, d]) => w === 'request' && d.uid === 'uA'), 'Ben bekommt ein request-Ereignis');
+  assert.equal(fa.list().length, 0, 'noch nicht befreundet');
+  await fb.accept('uA');
+  await new Promise((r) => setTimeout(r, 30));
+  assert.equal(fb.requestList().length, 0);
+  assert.deepEqual(fa.list().map((f) => f.name), ['Ben']);
+  assert.deepEqual(fb.list().map((f) => f.name), ['Anna']);
+  assert.equal(fa.list()[0].level, 1);
+  assert.match((await fa.addByCode(pb.friendCode)).reason, /schon befreundet/);
+  assert.ok(ev.a.some(([w, d]) => w === 'count' && d === 1), 'count-Ereignis für Erfolge');
+  // Anwesenheit
+  await fb._online();
+  await new Promise((r) => setTimeout(r, 30));
+  assert.equal(fa.list()[0].online, true);
+  assert.equal(fa.list()[0].room, null);
+  fb.ready = true; fb.setRoom('4711');
+  await new Promise((r) => setTimeout(r, 30));
+  assert.equal(fa.list()[0].room, '4711');
+  tpB._runDisconnect.call(tpA); // alle onDisconnect-Aufträge der geteilten Datenbank ausführen
+  await new Promise((r) => setTimeout(r, 30));
+  assert.equal(fa.list()[0].online, false);
+  assert.equal(fa.list()[0].room, null);
+  // Einladung
+  await fa.invite('uB', '1234');
+  await new Promise((r) => setTimeout(r, 30));
+  const inv = ev.b.find(([w]) => w === 'invite');
+  assert.ok(inv && inv[1].code === '1234' && inv[1].name === 'Anna');
+  assert.equal(fb.inviteList().length, 1);
+  await fb.dismissInvite('uA');
+  await new Promise((r) => setTimeout(r, 30));
+  assert.equal(fb.inviteList().length, 0);
+  // gegenseitige Anfragen werden automatisch angenommen
+  await fc.addByCode(pa.friendCode);
+  await new Promise((r) => setTimeout(r, 30));
+  assert.equal(fa.requestList().length, 1);
+  const r2 = await fa.addByCode(pc.friendCode);
+  assert.equal(r2.accepted, true);
+  await new Promise((r) => setTimeout(r, 30));
+  assert.equal(fa.list().length, 2);
+  // Entfernen wirkt auf beiden Seiten
+  await fa.removeFriend('uB');
+  await new Promise((r) => setTimeout(r, 30));
+  assert.deepEqual(fa.list().map((f) => f.name), ['Cleo']);
+  assert.equal(fb.list().length, 0);
+  // alte Einladungen (> 3 Min) werden verworfen
+  await tpA.set('social/uC/invites/uA', { code: '9999', name: 'Anna', avatar: '🦊', t: Date.now() - 4 * 60000 });
+  await new Promise((r) => setTimeout(r, 30));
+  assert.equal(fc.inviteList().length, 0);
+  assert.equal(await tpA.get('social/uC/invites/uA'), null);
+  assert.equal(agoText(Date.now() - 5 * 60000), 'vor 5 Min');
+  [fa, fb, fc].forEach((f) => f.stop());
 });
 
 console.log(`\n${n} Tests bestanden`);

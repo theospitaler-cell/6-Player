@@ -7,6 +7,7 @@ import { toList } from './room.js';
 import { standings, awards } from './scoring.js';
 import { TEAM_COLORS, CATEGORIES } from './state.js';
 import { copyText } from './util.js';
+import { readBracket, nextMatch, roundName } from './ko.js';
 import { toast } from './ui.js';
 
 const MEDAL = ['🥇', '🥈', '🥉'];
@@ -168,6 +169,7 @@ export function introScreen(party) {
   const room = party.room;
   const el = h('div', { class: 'screen-body intro' });
   const bar = h('div', { class: 'phase-bar' }, h('div', { class: 'phase-bar-fill' }));
+  const skipBtn = h('button', { class: 'btn small skip', type: 'button', onclick: () => { room.vote('skip'); sfx('select'); } }, '⏭ Überspringen');
   let built = '';
   const render = () => {
     const m = room.meta; if (!m || !m.gameId) return;
@@ -183,7 +185,12 @@ export function introScreen(party) {
     el.innerHTML = '';
     const left = h('div', { class: 'intro-left' });
     const right = h('div', { class: 'intro-right' });
-    left.appendChild(h('div', { class: 'intro-round' }, m.stechen ? '⚔️ STECHEN – Entscheidung!' : (s.partyType === 'free' ? 'Freies Spiel' : `Runde ${(m.roundIndex || 0) + 1} von ${m.totalRounds}`)));
+    let head = m.stechen ? '⚔️ STECHEN – Entscheidung!' : (s.partyType === 'free' ? 'Freies Spiel' : `Runde ${(m.roundIndex || 0) + 1} von ${m.totalRounds}`);
+    if (m.koCur) {
+      const br = readBracket(m.ko); const [kr, km] = String(m.koCur).split(':').map(Number); const mt = br && br.rounds[kr] && br.rounds[kr][km];
+      if (mt) head = `🏆 ${roundName(br.size, kr)} · Stand ${mt.wa}:${mt.wb} (Best of 3)`;
+    }
+    left.appendChild(h('div', { class: 'intro-round' }, head));
     if (isLast && s.doubleFinal) left.appendChild(h('div', { class: 'finale-badge' }, '🔥 FINALE – doppelte Punkte!'));
     left.appendChild(h('div', { class: 'intro-emoji' }, g.emoji));
     left.appendChild(h('h1', { class: 'intro-name' }, g.name));
@@ -205,12 +212,16 @@ export function introScreen(party) {
     right.appendChild(wrap);
     if (!parts.includes(me)) right.appendChild(h('div', { class: 'intro-spec' }, '👀 Du schaust in dieser Runde zu – im Duell spielen die Spieler mit den wenigsten Punkten.'));
     el.appendChild(h('div', { class: 'intro-cols' }, left, right));
-    el.appendChild(bar);
+    el.appendChild(h('div', { class: 'intro-foot' }, skipBtn, bar));
   };
   const stop = ticker(() => {
     const m = room.meta; if (!m) return;
     bar.firstChild.style.width = Math.max(0, Math.min(100, ((m.phaseUntil || 0) - party.tp.serverNow()) / 40)) + '%';
-  }, 100);
+    const hum = room.humans().filter((p) => p.connected !== false), votes = room.d.votes || {};
+    const n = hum.filter((p) => votes[p.uid] === 'skip').length, mine = votes[room.uid] === 'skip';
+    skipBtn.textContent = mine ? `✔ Gleich … (${n}/${hum.length})` : `⏭ Überspringen${n ? ` (${n}/${hum.length})` : ''}`;
+    skipBtn.classList.toggle('picked', mine);
+  }, 150);
   render();
   return { el, update: render, destroy: stop };
 }
@@ -233,6 +244,11 @@ export function resultScreen(party) {
     el.appendChild(h('h1', { class: 'screen-title' }, `${g ? g.emoji : ''} Ergebnis`));
     if (!rec) { el.appendChild(h('p', { class: 'screen-sub' }, 'Auswertung …')); return; }
     if (!rec.valid) { el.appendChild(h('p', { class: 'screen-sub' }, 'Diese Runde war leider ungültig und zählt nicht. 🙈')); return; }
+    if (rec.ko) {
+      const pa = room.player(rec.ko.a), pb = room.player(rec.ko.b), w = room.player(rec.ko.w);
+      el.appendChild(h('div', { class: 'ko-score' }, `${pa ? pa.avatar + ' ' + pa.name : '?'}  ${rec.ko.wa} : ${rec.ko.wb}  ${pb ? pb.name + ' ' + pb.avatar : '?'}`));
+      if (w) el.appendChild(h('div', { class: 'finale-badge' }, `🏆 ${w.name} gewinnt das Match!`));
+    }
     const ranks = toList(rec.ranks).slice().sort((a, b) => a.rank - b.rank);
     const pts = rec.pts || {};
     const list = h('div', { class: 'res-list' });
@@ -255,7 +271,7 @@ export function resultScreen(party) {
     el.appendChild(list);
     if (rec.fin) el.appendChild(h('div', { class: 'finale-badge' }, '🔥 Finale: doppelte Punkte!'));
     if (party.reward && party.reward.round === m.roundIndex) {
-      el.appendChild(h('div', { class: 'reward' }, `+${party.reward.xp} XP · +${party.reward.coins} 🪙`));
+      el.appendChild(h('div', { class: 'reward' }, `+${party.reward.xp} XP · +${party.reward.coins} 🪙${party.reward.hs ? ' · 🏆 Neuer Highscore!' : ''}`));
     }
   };
   render();
@@ -323,17 +339,20 @@ export function finishedScreen(party) {
   let built = '';
   const render = () => {
     const m = room.meta; if (!m) return;
-    const key = `${m.partyId}:${room.isHost}:${toList(m.stechenOrder).join(',')}:${room.list().map((p) => p.score).join(',')}`;
+    const key = `${m.partyId}:${room.isHost}:${toList(m.stechenOrder).join(',')}:${room.list().map((p) => p.score).join(',')}:${m.koPlace ? Object.keys(m.koPlace).length : ''}`;
     if (built === key) return;
     const first = built === '';
     built = key;
     const s = room.settings();
     const players = room.list().map((p) => ({ ...p }));
-    const table = standings(players, toList(m.stechenOrder));
+    const ko = !!m.koPlace;
+    const table = ko
+      ? players.map((p) => ({ ...p, place: (m.koPlace[p.uid] != null ? m.koPlace[p.uid] : 99) })).sort((a, b) => a.place - b.place || String(a.uid).localeCompare(String(b.uid)))
+      : standings(players, toList(m.stechenOrder));
     const hist = room.d.history.filter((x) => x && x.valid && !x.st).map((x) => ({ ranks: toList(x.ranks) }));
-    const aw = awards(hist, players);
+    const aw = ko ? {} : awards(hist, players);
     el.innerHTML = '';
-    el.appendChild(h('h1', { class: 'screen-title' }, '🏆 Siegerehrung'));
+    el.appendChild(h('h1', { class: 'screen-title' }, ko ? '🏆 Turniersieger!' : '🏆 Siegerehrung'));
     if (m.stechenOrder) el.appendChild(h('p', { class: 'screen-sub' }, '⚔️ Gleichstand – das Stechen im Schnellzieher hat entschieden!'));
     const finLeft = h('div', { class: 'fin-left' });
     const finRight = h('div', { class: 'fin-right' });
@@ -346,13 +365,13 @@ export function finishedScreen(party) {
         h('div', { class: 'pod-medal' }, MEDAL[place - 1]),
         avatarChip(p, { size: place === 1 ? 64 : 52 }),
         h('div', { class: 'pod-name' }, p.name),
-        h('div', { class: 'pod-block' }, h('b', null, String(p.score || 0)), h('small', null, 'Punkte'))));
+        h('div', { class: 'pod-block' }, h('b', null, ko ? String(p.place) : String(p.score || 0)), h('small', null, ko ? 'Platz' : 'Punkte'))));
     }
     finLeft.appendChild(pod);
     const rest = table.slice(3);
     if (rest.length) {
       finRight.appendChild(h('div', { class: 'res-list rest' }, rest.map((p) => h('div', { class: 'res-row' + (p.uid === room.uid ? ' me' : '') },
-        h('div', { class: 'res-rank' }, String(p.place)), avatarChip(p, { size: 34 }), h('div', { class: 'res-name' }, p.name), h('div', { class: 'pts-chip plain' }, String(p.score || 0))))));
+        h('div', { class: 'res-rank' }, String(p.place)), avatarChip(p, { size: 34 }), h('div', { class: 'res-name' }, p.name), h('div', { class: 'pts-chip plain' }, ko ? (p.place >= 99 ? '–' : p.place + '.') : String(p.score || 0))))));
     }
     const chips = [];
     const nameOf = (u) => { const p = room.player(u); return p ? `${p.avatar} ${p.name}` : '?'; };
@@ -362,7 +381,7 @@ export function finishedScreen(party) {
     if (chips.length) finRight.appendChild(h('div', { class: 'awards' }, chips.map((c) => h('div', { class: 'award' }, c))));
     if (party.reward && party.reward.party) finRight.appendChild(h('div', { class: 'reward' }, `Party-Bonus: +${party.reward.xp} XP · +${party.reward.coins} 🪙`));
     const share = () => {
-      const txt = `🎉 PartyPlay 6 – Endstand\n` + table.map((p) => `${p.place === 1 ? '🥇' : p.place === 2 ? '🥈' : p.place === 3 ? '🥉' : p.place + '.'} ${p.name} – ${p.score || 0} Pkt.`).join('\n');
+      const txt = `🎉 PartyPlay 6 – ${ko ? 'Turnier-Ergebnis' : 'Endstand'}\n` + table.map((p) => `${p.place === 1 ? '🥇' : p.place === 2 ? '🥈' : p.place === 3 ? '🥉' : p.place + '.'} ${p.name}${ko ? '' : ` – ${p.score || 0} Pkt.`}`).join('\n');
       if (navigator.share) navigator.share({ text: txt }).catch(() => {});
       else copyText(txt).then((ok) => toast(ok ? 'Ergebnis kopiert 📋' : 'Kopieren nicht möglich'));
     };
@@ -381,4 +400,47 @@ export function finishedScreen(party) {
 
 export function waitingScreen(text = 'Lade …') {
   return { el: h('div', { class: 'screen-body center' }, h('div', { class: 'spinner' }), h('p', { class: 'screen-sub' }, text)), update: () => {} };
+}
+
+// ============================================================================
+// K.-o.-Turnier: Bracket
+// ============================================================================
+export function bracketScreen(party) {
+  const room = party.room;
+  const el = h('div', { class: 'screen-body bracket' });
+  const bar = h('div', { class: 'phase-bar' }, h('div', { class: 'phase-bar-fill' }));
+  const row = (uid, wins, win, lose) => {
+    if (uid === '-') return h('div', { class: 'br-p bye' }, 'Freilos');
+    const p = uid ? room.player(uid) : null;
+    if (!p) return h('div', { class: 'br-p empty' }, uid ? 'ausgestiegen' : '…');
+    return h('div', { class: 'br-p' + (win ? ' win' : '') + (lose ? ' lose' : '') + (uid === room.uid ? ' me' : '') }, avatarChip(p, { size: 26 }), h('span', { class: 'br-name' }, p.name), h('span', { class: 'br-wins' }, wins > 0 ? '●'.repeat(wins) : ''));
+  };
+  const render = () => {
+    const m = room.meta; if (!m) return;
+    const br = readBracket(m.ko);
+    el.innerHTML = '';
+    if (!br) return;
+    const nm = nextMatch(br);
+    el.appendChild(h('h1', { class: 'screen-title' }, '🏆 K.-o.-Turnier'));
+    const nxt = nm && br.rounds[nm.r][nm.m];
+    const pa = nxt && room.player(nxt.a), pb = nxt && room.player(nxt.b);
+    el.appendChild(h('p', { class: 'screen-sub' }, nm && pa && pb ? `Nächstes Match: ${pa.avatar} ${pa.name} gegen ${pb.avatar} ${pb.name} – ${roundName(br.size, nm.r)}` : 'Das Turnier ist entschieden!'));
+    const cols = h('div', { class: 'br-cols' });
+    br.rounds.forEach((round, r) => {
+      const box = h('div', { class: 'br-matches' });
+      const col = h('div', { class: 'br-col' }, h('div', { class: 'br-head' }, roundName(br.size, r)), box);
+      round.forEach((mt, mi) => {
+        const cur = nm && nm.r === r && nm.m === mi;
+        box.appendChild(h('div', { class: 'br-match' + (cur ? ' cur' : '') + (mt.bye ? ' bye' : '') },
+          row(mt.a, mt.wa, mt.w && mt.w === mt.a, mt.w && mt.w !== mt.a && mt.a),
+          row(mt.b, mt.wb, mt.w && mt.w === mt.b, mt.w && mt.w !== mt.b && mt.b)));
+      });
+      cols.appendChild(col);
+    });
+    el.appendChild(cols);
+    el.appendChild(bar);
+  };
+  const stop = ticker(() => { const m = room.meta; if (m) bar.firstChild.style.width = Math.max(0, Math.min(100, ((m.phaseUntil || 0) - party.tp.serverNow()) / 65)) + '%'; }, 150);
+  render();
+  return { el, update: render, destroy: stop };
 }

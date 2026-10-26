@@ -1,3 +1,4 @@
+import { CUPS } from './cups.js';
 // Welche Spiele dürfen gerade gespielt werden? (Spielerzahl, Pool-Einstellungen, „nur einmal“)
 
 /** → { ok, reason } – reason erklärt, warum ein Spiel gerade nicht geht. */
@@ -15,7 +16,10 @@ export function gameFits(g, settings, nActive, nHumans) {
  * (reset = true heißt: die Liste der gespielten Spiele wird zurückgesetzt).
  */
 export function selectionPool(games, settings, { nActive, nHumans, played = [] }) {
-  const fits = games.filter((g) => gameFits(g, settings, nActive, nHumans).ok);
+  let fits = games.filter((g) => gameFits(g, settings, nActive, nHumans).ok);
+  // Themen-Cup: nur die passenden Spiele (bleibt nichts übrig → alle passenden)
+  const cup = CUPS[settings.cup];
+  if (cup) { const f2 = fits.filter(cup.filter); if (f2.length) fits = f2; }
   if (!settings.onlyOnce) return { pool: fits, reset: false, fits };
   const fresh = fits.filter((g) => !played.includes(g.id));
   if (fresh.length) return { pool: fresh, reset: false, fits };

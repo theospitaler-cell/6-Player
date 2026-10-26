@@ -8,11 +8,19 @@ import { consumeConfigFromUrl } from './firebase.js';
 import { Room, cleanName } from './room.js';
 import { Party } from './party.js';
 import { GAMES } from '../games/registry.js';
+import { CUPS, CUP_IDS } from './cups.js';
 import { setupScreen } from './setup.js';
+import { shopScreen } from './shopui.js';
+import { profileScreen } from './profileui.js';
+import { FIGURES, ownsAvatar } from './shop.js';
+import { resetHighscores, track } from './progress.js';
+import { announce } from './profileui.js';
+import { friends, normCode, showCode } from './friends.js';
+import { friendsScreen } from './friendsui.js';
 import { waitingScreen } from './screens.js';
 import { lsDel } from './util.js';
 
-const VERSION = 'Etappe 1';
+const VERSION = 'v1.0';
 
 // ---------------------------------------------------------------------------- Hilfen
 let busyEl = null;
@@ -23,7 +31,7 @@ function busy(text) {
 }
 function hideBusy() { if (busyEl) { busyEl.remove(); busyEl = null; } }
 
-function playerInfo() { return { name: profile.name, avatar: profile.avatar, color: profile.color, level: levelInfo().level }; }
+function playerInfo() { return { name: profile.name, avatar: profile.avatar, frame: profile.equipped.frame, color: profile.color, level: levelInfo().level }; }
 
 async function ensureName() {
   if (cleanName(profile.name)) return true;
@@ -38,16 +46,32 @@ async function ensureName() {
 function enterParty(room, solo = false) {
   const party = new Party(room, { solo, onExit: () => showHome() });
   app.party = party;
+  if (!solo) friends.setRoom(room.code);
   party.start();
 }
 
 // ---------------------------------------------------------------------------- Aktionen
-async function createParty() {
+async function createParty(preset = null) {
   unlockAudio();
   if (!(await ensureName())) return;
   busy('Party wird erstellt …');
-  try { const room = await Room.create(app.tp, playerInfo()); hideBusy(); enterParty(room); }
-  catch (e) { hideBusy(); toast(e.message || 'Party konnte nicht erstellt werden', 3500, 'bad'); }
+  try {
+    const room = await Room.create(app.tp, playerInfo());
+    if (preset) await room.setSettings(preset);
+    hideBusy(); enterParty(room);
+  } catch (e) { hideBusy(); toast(e.message || 'Party konnte nicht erstellt werden', 3500, 'bad'); }
+}
+
+/** Schnellstart: Themen-Cups, K.-o.-Turnier oder eine eigene Party. */
+function createSheet() {
+  unlockAudio();
+  const body = h('div', { class: 'cup-grid' });
+  const sh = sheet('🎉 Party erstellen', body);
+  const card = (emoji, name, desc, preset, cls = '') => h('button', { class: 'cup-card ' + cls, type: 'button', onclick: () => { sh.close(); createParty(preset); } },
+    h('div', { class: 'cup-emoji' }, emoji), h('div', { class: 'cup-name' }, name), h('div', { class: 'cup-desc' }, desc));
+  body.appendChild(card('⚙️', 'Eigene Party', 'Alles selbst einstellen', null, 'wide'));
+  body.appendChild(card('⚔️', 'K.-o.-Turnier', 'Duelle im Best-of-3 mit Bracket', { partyType: 'ko' }));
+  for (const id of CUP_IDS) { const c = CUPS[id]; body.appendChild(card(c.emoji, c.name, c.desc, { partyType: 'cup', cup: id, mode: 'random', rounds: 7 })); }
 }
 
 async function joinParty(code) {
@@ -88,13 +112,23 @@ async function startSolo(bots, level) {
 }
 
 // ---------------------------------------------------------------------------- Startseite
+let homeUnsub = null;
 export function showHome() {
   app.party = null;
+  friends.setRoom(null);
+  friends.publish();
+  if (homeUnsub) { homeUnsub(); homeUnsub = null; }
   const li = levelInfo();
   const conn = h('div', { class: 'conn-pill ' + (app.online ? 'on' : 'demo') }, h('span', { class: 'conn-dot ' + (app.online ? 'on' : 'off') }), app.online ? 'Online' : 'Demo');
   const nameInp = h('input', { class: 'name-input', type: 'text', maxlength: '14', placeholder: 'Dein Name', value: profile.name, autocomplete: 'off', 'aria-label': 'Dein Name' });
   nameInp.addEventListener('input', () => { profile.name = nameInp.value; saveProfile(); });
   const avBtn = h('button', { class: 'av-pick', type: 'button', style: { background: (COLORS.find((c) => c.id === profile.color) || COLORS[0]).hex }, onclick: () => avatarSheet(() => { avBtn.textContent = profile.avatar; }) }, profile.avatar);
+
+  const frBadge = h('span', { class: 'badge' });
+  const frBtn = h('button', { class: 'btn', onclick: showFriends }, '👥 Freunde', frBadge);
+  const updBadge = () => { const n = friends.badge(); frBadge.textContent = n ? String(n) : ''; frBadge.style.display = n ? '' : 'none'; };
+  updBadge();
+  homeUnsub = friends.on((w) => { if (w === 'change') updBadge(); });
 
   const el = h('div', { class: 'screen-body home' },
     h('div', { class: 'home-top' },
@@ -106,16 +140,16 @@ export function showHome() {
       !app.online ? h('button', { class: 'setup-banner', type: 'button', onclick: showSetup },
         app.netError ? `⚠️ Online-Verbindung fehlgeschlagen – Anleitung` : '🧪 Online-Party nicht eingerichtet – Anleitung') : null),
     h('div', { class: 'menu home-right' },
-      h('button', { class: 'btn big primary', onclick: createParty }, '🎉 Party erstellen'),
+      h('button', { class: 'btn big primary', onclick: () => createSheet() }, '🎉 Party erstellen'),
       h('button', { class: 'btn big blue', onclick: () => showJoin() }, '🔑 Party beitreten'),
       h('button', { class: 'btn big green', onclick: soloSheet }, '🤖 Solo-Training'),
       h('div', { class: 'menu-row' },
         h('button', { class: 'btn', onclick: showLibrary }, '📚 Spiele'),
         h('button', { class: 'btn', onclick: showProfile }, '👤 Profil'),
         h('button', { class: 'btn', onclick: showSettings }, '⚙️ Optionen')),
-      h('div', { class: 'menu-row soon' },
-        h('button', { class: 'btn disabled', onclick: () => toast('🛒 Der Shop kommt in einer späteren Etappe!') }, '🛒 Shop · bald'),
-        h('button', { class: 'btn disabled', onclick: () => toast('👥 Freunde kommen in einer späteren Etappe!') }, '👥 Freunde · bald'))),
+      h('div', { class: 'menu-row' },
+        h('button', { class: 'btn', onclick: showShop }, '🛒 Shop'),
+        frBtn)),
     h('div', { class: 'home-foot' }, `PartyPlay 6 · ${VERSION}`));
   showScreen('home', { el, update: () => {} });
 }
@@ -123,13 +157,18 @@ export function showHome() {
 function avatarSheet(done) {
   const grid = h('div', { class: 'av-grid' });
   const cols = h('div', { class: 'col-row' });
+  const all = AVATARS.concat(FIGURES.map((f) => f.emoji));
   const draw = () => {
     clear(grid); clear(cols);
-    AVATARS.forEach((a) => grid.appendChild(h('button', { class: 'av-btn' + (a === profile.avatar ? ' on' : ''), type: 'button', onclick: () => { profile.avatar = a; saveProfile(); draw(); done && done(); } }, a)));
+    all.forEach((a) => {
+      const own = ownsAvatar(a);
+      grid.appendChild(h('button', { class: 'av-btn' + (a === profile.avatar ? ' on' : '') + (own ? '' : ' locked'), type: 'button',
+        onclick: () => { if (!own) { toast('🔒 Diese Figur gibt es im Shop!'); return; } profile.avatar = a; saveProfile(); draw(); done && done(); } }, a, own ? null : h('span', { class: 'lock' }, '🔒')));
+    });
     COLORS.forEach((c) => cols.appendChild(h('button', { class: 'col-btn' + (c.id === profile.color ? ' on' : ''), type: 'button', style: { background: c.hex }, 'aria-label': c.name, onclick: () => { profile.color = c.id; saveProfile(); draw(); done && done(); showHomeColor(c.hex); } })));
   };
   draw();
-  sheet('Deine Figur', h('div', null, h('label', { class: 'lbl' }, 'Figur'), grid, h('label', { class: 'lbl' }, 'Lieblingsfarbe (in der Party bekommst du sie, wenn sie frei ist)'), cols));
+  sheet('Deine Figur', h('div', null, h('label', { class: 'lbl' }, 'Figur (🔒 = im Shop kaufen)'), grid, h('label', { class: 'lbl' }, 'Lieblingsfarbe (in der Party bekommst du sie, wenn sie frei ist)'), cols));
 }
 function showHomeColor(hex) { const b = $('.av-pick'); if (b) b.style.background = hex; }
 
@@ -174,27 +213,18 @@ function showLibrary() {
     const det = h('div', { class: 'lib-det' },
       h('ul', null, g.howTo.map((t) => h('li', null, t))),
       h('div', { class: 'lib-tags' }, h('span', null, `${CATEGORIES[g.category] || ''} ${g.category}`), h('span', null, g.min === g.max ? `${g.min} Spieler` : `${g.min}–${g.max} Spieler`), g.teams === 'only' ? h('span', null, '🧑‍🤝‍🧑 Teams') : null, g.duel ? h('span', null, '⚔️ Duell') : null, h('span', null, `⏱ ${g.duration} s`)),
-      h('p', { class: 'lib-wert' }, 'Wertung: ' + g.wertung));
+      h('p', { class: 'lib-wert' }, 'Wertung: ' + g.wertung),
+      profile.highscores[g.id] ? h('p', { class: 'lib-hs' }, '🏆 Dein Bestwert (Solo): ' + profile.highscores[g.id].label) : null);
     const card = h('button', { class: 'lib-card', type: 'button', onclick: () => card.classList.toggle('open') },
       h('div', { class: 'lib-head' }, h('span', { class: 'lib-emoji' }, g.emoji), h('span', { class: 'lib-name' }, g.name), h('span', { class: 'lib-chev' }, '›')), det);
     list.appendChild(card);
   }
-  showScreen('library', { el: h('div', { class: 'screen-body scroll' }, backBar('Spiele', showHome), h('p', { class: 'screen-sub' }, `${GAMES.length} Spiele – mehr kommen mit jeder Etappe!`), list), update: () => {} });
+  showScreen('library', { el: h('div', { class: 'screen-body scroll' }, backBar('Spiele', showHome), h('p', { class: 'screen-sub' }, `${GAMES.length} Spiele – tippe auf ein Spiel für die Anleitung`), list), update: () => {} });
 }
 
-function showProfile() {
-  const li = levelInfo();
-  const st = profile.stats;
-  const avBtn = h('button', { class: 'av-pick big', type: 'button', style: { background: (COLORS.find((c) => c.id === profile.color) || COLORS[0]).hex }, onclick: () => avatarSheet(() => showProfile()) }, profile.avatar);
-  const stat = (n, l) => h('div', { class: 'stat' }, h('b', null, String(n)), h('span', null, l));
-  showScreen('profile', {
-    el: h('div', { class: 'screen-body scroll' }, backBar('Profil', showHome),
-      h('div', { class: 'prof-card' }, avBtn, h('div', { class: 'prof-name' }, profile.name || 'Spieler'), h('div', { class: 'prof-lv' }, `Level ${li.level}`),
-        h('div', { class: 'lv-bar wide' }, h('div', { class: 'lv-fill', style: { width: li.frac * 100 + '%' } })), h('small', null, `${li.into} / ${li.need} XP bis Level ${li.level + 1}`)),
-      h('div', { class: 'stats' }, stat('🪙 ' + profile.coins, 'Münzen'), stat(st.parties, 'Partys'), stat(st.wins, 'Party-Siege'), stat(st.rounds, 'Runden'), stat(st.roundWins, 'Rundensiege'))),
-    update: () => {},
-  });
-}
+function showProfile() { showScreen('profile', profileScreen({ onBack: showHome, onAvatar: () => avatarSheet(() => showProfile()) })); }
+function showShop() { showScreen('shop', shopScreen({ onBack: showHome })); }
+function showFriends() { showScreen('friends', friendsScreen({ onBack: showHome, onJoin: (code) => joinParty(code), onSetup: showSetup })); }
 
 function showSettings() {
   const row = (label, key) => h('div', { class: 'set-row' }, h('div', { class: 'set-label' }, label), switchEl(profile.settings[key], (v) => { profile.settings[key] = v; saveProfile(); applyAudioSettings(); }));
@@ -208,6 +238,10 @@ function showSettings() {
       h('div', { class: 'conn-card ' + (app.online ? 'ok' : 'warn') }, app.online ? '✅ Online verbunden' : (app.netError ? '⚠️ ' + app.netError : '🧪 Demo-Modus (nur dieses Gerät)')),
       h('button', { class: 'btn primary', onclick: showSetup }, '🌐 Online-Party einrichten'),
       h('h2', { class: 'sec-title' }, 'Sonstiges'),
+      h('button', { class: 'btn ghost', onclick: async () => {
+        const ok = await dialog({ title: 'Highscores zurücksetzen?', text: 'Alle Solo-Bestwerte werden gelöscht.', buttons: [{ label: 'Abbrechen', value: false }, { label: 'Zurücksetzen', value: true, kind: 'danger' }] });
+        if (ok) { resetHighscores(); toast('Highscores zurückgesetzt'); }
+      } }, '🏆 Highscores zurücksetzen'),
       h('button', { class: 'btn ghost', onclick: async () => {
         const ok = await dialog({ title: 'Profil zurücksetzen?', text: 'Name, Level, Münzen und Statistik werden gelöscht.', buttons: [{ label: 'Abbrechen', value: false }, { label: 'Zurücksetzen', value: true, kind: 'danger' }] });
         if (ok) { lsDel('pp6.profile.v1'); location.reload(); }
@@ -252,9 +286,32 @@ export async function boot() {
   const code = (params.get('code') || '').replace(/\D/g, '').slice(0, 4);
   if (params.has('code')) history.replaceState(null, '', location.href.split('?')[0]);
   showHome();
+  if (res.online) startFriends(params.get('friend'));
+  if (params.has('friend')) history.replaceState(null, '', location.href.split('?')[0]);
   if (res.online) {
     const sess = await Room.findSession(app.tp);
     if (sess && sess.code !== code) { await restoreFlow(sess); return; }
   }
   if (code.length === 4) { const ok = await joinParty(code); if (!ok) showJoin(code); }
+}
+
+// ---------------------------------------------------------------------------- Freunde (Hintergrund)
+function startFriends(linkCode) {
+  friends.on(async (what, d) => {
+    if (what === 'count') announce(track('friends', { count: d }));
+    else if (what === 'request') { sfx('join'); toast(`👋 ${d.name} möchte dein Freund sein – siehe „Freunde“`, 4000); }
+    else if (what === 'invite') {
+      sfx('join');
+      if (app.party) { toast(`📨 ${d.name} lädt dich in Party ${d.code} ein (siehe „Freunde“)`, 4500); return; }
+      const ok = await dialog({ title: `${d.avatar || '🎉'} ${d.name} lädt dich ein`, text: `Party ${d.code} – jetzt beitreten?`, buttons: [{ label: 'Später', value: false }, { label: 'Beitreten', value: true, kind: 'primary' }] });
+      if (ok) { friends.dismissInvite(d.uid); joinParty(d.code); }
+    }
+  });
+  friends.start(app.tp).then(async () => {
+    const code = normCode(linkCode);
+    if (code.length === 6) {
+      const ok = await dialog({ title: 'Freundschaftsanfrage', text: `Anfrage an den Code ${showCode(code)} schicken?`, buttons: [{ label: 'Nein', value: false }, { label: 'Ja', value: true, kind: 'primary' }] });
+      if (ok) { const r = await friends.addByCode(code); toast(r.ok ? (r.accepted ? 'Ihr seid jetzt befreundet 🎉' : 'Anfrage gesendet ✔') : r.reason, 3200, r.ok ? '' : 'bad'); }
+    }
+  }).catch((e) => console.warn('Freunde nicht verfügbar:', e && e.message));
 }

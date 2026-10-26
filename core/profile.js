@@ -13,11 +13,20 @@ const DEFAULT = () => ({
   stats: { parties: 0, wins: 0, rounds: 0, roundWins: 0 },
   settings: { music: true, sound: true, vibration: true, tapSide: 'R' },
   lastParty: null, // zuletzt abgeschlossene Party-ID (Belohnung nur einmal)
+  unlocked: {},    // im Shop gekaufte Dinge: { 'fig:🦝': true, 'frm:gold': true }
+  equipped: { frame: 'weiss' },
+  achieved: {},    // freigeschaltete Erfolge { id: Zeitstempel }
+  counters: {},    // Zähler für Erfolge/Missionen (z. B. gespielte Spiele je Kategorie)
+  missions: null,  // { day: 'YYYY-MM-DD', list: [{id, progress, done, claimed}] }
+  highscores: {},  // { spielId: { value, label } } – bestes Solo-Ergebnis
+  friendCode: null,
 });
 
 export const profile = Object.assign(DEFAULT(), lsGet(KEY, {}));
 profile.stats = Object.assign(DEFAULT().stats, profile.stats || {});
 profile.settings = Object.assign(DEFAULT().settings, profile.settings || {});
+profile.equipped = Object.assign(DEFAULT().equipped, profile.equipped || {});
+for (const k of ['unlocked', 'achieved', 'counters', 'highscores']) profile[k] = profile[k] || {};
 
 export function saveProfile() { lsSet(KEY, profile); }
 

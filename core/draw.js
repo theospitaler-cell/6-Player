@@ -73,5 +73,7 @@ export function checker(g, x, y, w, h, size, c1, c2) {
 }
 
 export const mix = (a, b, t) => a + (b - a) * t;
+/** Rahmen-/Ringfarbe einer Spielfigur (Rahmen aus dem Shop, Regenbogen animiert). */
+export { ringColor } from './shop.js';
 /** Wert aus prev/cur-Snapshot-Feld interpolieren (prev kann fehlen). */
 export const ip = (prev, cur, alpha) => (prev == null ? cur : prev + (cur - prev) * alpha);

@@ -1,6 +1,6 @@
 // Service Worker: „Netzwerk zuerst“ – so bekommen alle immer die neueste Version,
 // und die App startet trotzdem, wenn das Netz kurz weg ist.
-const CACHE = 'pp6-shell-v1';
+const CACHE = 'pp6-shell-v2';
 
 self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', (e) => {

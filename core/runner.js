@@ -10,6 +10,7 @@ import { toList } from './room.js';
 import { TS } from './transport.js';
 import { TEAM_COLORS } from './state.js';
 import { profile } from './profile.js';
+import { ringColor } from './shop.js';
 
 const SNAP_MS = 66;        // Snapshot-Takt (~15 Hz)
 const SEND_MS = 50;        // Eingaben höchstens alle 50 ms (20 Hz)
@@ -51,7 +52,8 @@ export class GameRunner {
     this.players = uids.map((uid, idx) => {
       const p = room.player(uid) || { name: '?', avatar: '❔', color: 'red', colorHex: '#888' };
       return {
-        uid, idx, name: p.name, avatar: p.avatar, color: p.color, colorHex: p.colorHex,
+        uid, idx, name: p.name, avatar: p.avatar, color: p.color, colorHex: p.colorHex, frame: p.frame || 'weiss',
+        get ring() { return ringColor(this.frame); },
         isBot: !!p.isBot, botLevel: p.botLevel || settings.botLevel,
         team: meta.teams && meta.teams[uid] != null ? Number(meta.teams[uid]) : null,
       };
@@ -69,6 +71,8 @@ export class GameRunner {
       seed: meta.seed, rng: mulberry32(meta.seed), settings, duration: this.duration,
       serverNow: () => tp.serverNow(), now: () => performance.now(), sfx, vibrate,
       submit: (payload) => this._submit(payload),
+      send: (obj) => this._onInput(obj),          // Eingabe wie von der Steuerung (für Zeiger-/Widget-Spiele)
+      push: (obj) => this._push(obj),             // Kanal: alle Geräte sehen die Einträge (z. B. Zeichenstriche)
     };
     this.inst = game.create(this.ctx);
 
@@ -89,7 +93,7 @@ export class GameRunner {
     this.timerEl = h('div', { class: 'hud-timer' }, String(Math.round(this.duration)));
     const left = this.isHost
       ? h('button', { class: 'icon-btn hud-pause', type: 'button', onclick: () => this.o.onMenu && this.o.onMenu(), 'aria-label': 'Menü' }, '⏸')
-      : h('div', { class: 'hud-round' }, this.settings.partyType === 'free' ? 'Freies Spiel' : `Runde ${this.round + 1}/${this.meta.totalRounds}`);
+      : h('div', { class: 'hud-round' }, this.meta.koCur ? 'K.-o.-Match' : (this.settings.partyType === 'free' ? 'Freies Spiel' : `Runde ${this.round + 1}/${this.meta.totalRounds}`));
     this.el.appendChild(h('div', { class: 'hud' }, left, h('div', { class: 'hud-title' }, `${g.emoji} ${g.name}`), this.timerEl));
 
     this.canvas = h('canvas', { class: 'game-canvas' });
@@ -120,13 +124,14 @@ export class GameRunner {
 
     // Steuerung
     if (this.isPlayer) {
-      if (g.controls === 'PICK') {
+      if (g.controls === 'PICK' || g.controls === 'DRAW') {
         if (this.inst.mountUI) this.inst.mountUI(this.ctlR, { send: (o) => this._onInput(o) });
       } else {
-        this.controls = createControls(g, { left: this.ctlL, right: this.ctlR }, {
+        this.controls = createControls(g, { left: this.ctlL, right: this.ctlR, stage: this.stage }, {
           onInput: (o) => this._onInput(o), color: this.byUid[this.me].colorHex, tapSide: profile.settings.tapSide === 'L' ? 'L' : 'R',
         });
       }
+      if (g.pointer && this.inst.onPointer) this._attachPointer();
       if (g.stageInput && this.inst.onStagePointer) {
         this.canvas.addEventListener('pointerdown', (e) => {
           const r = this.canvas.getBoundingClientRect();
@@ -164,6 +169,7 @@ export class GameRunner {
       case 'JOY': return { l: 0.42, r: 0 };
       case 'JOY+BTN': return { l: 0.4, r: 0.24 };
       case 'PICK': return { l: 0, r: g.ctlWidth != null ? g.ctlWidth : 0.42 };
+      case 'DRAW': return { l: 0, r: g.ctlWidth != null ? g.ctlWidth : 0.42 };
       default: return { l: 0, r: 0 };
     }
   }
@@ -185,6 +191,12 @@ export class GameRunner {
   // ---------------------------------------------------------------- Netzwerk
   _subscribe() {
     const { tp, room } = this;
+    if (this.game.channel) {
+      this.unsubs.push(tp.on(room.p(`chan/${this.round}`), (v) => {
+        const list = Object.entries(v || {}).sort((a, b) => (a[0] < b[0] ? -1 : 1)).map((e) => e[1]);
+        try { this.inst.onChan && this.inst.onChan(list); } catch (e) { this._err(e); }
+      }));
+    }
     if (this.local) {
       this.unsubs.push(tp.on(room.p(`submits/${this.round}`), (v) => this._onSubmits(v || {})));
     } else {
@@ -235,6 +247,28 @@ export class GameRunner {
     if (!this.started || this.ended || this.timedUp) return;
     if (this.local || this.isHost) { try { this.inst.onInput(this.me, obj); } catch (e) { this._err(e); } }
     else if (this.sender) this.sender.push(obj);
+  }
+
+  _push(obj) {
+    if (this.dead) return;
+    const key = String(Math.floor(this.tp.serverNow())).padStart(14, '0') + '_' + this.me.slice(0, 6) + (this.pushN = (this.pushN || 0) + 1);
+    this.tp.set(this.room.p(`chan/${this.round}/${key}`), { ...obj, u: this.me }).catch(() => {});
+  }
+
+  /** Zeiger auf der Bühne → onPointer(type, x, y) in logischen Koordinaten. */
+  _attachPointer() {
+    const c = this.canvas, g = this.game;
+    const pos = (e) => { const r = c.getBoundingClientRect(); return [(e.clientX - r.left) / r.width * g.view.w, (e.clientY - r.top) / r.height * g.view.h]; };
+    let pid = null;
+    const call = (type, e) => {
+      if (!this.started || this.ended || this.timedUp || this.specMode) return;
+      const [x, y] = pos(e);
+      try { this.inst.onPointer(type, x, y); } catch (err) { this._err(err); }
+    };
+    c.addEventListener('pointerdown', (e) => { if (pid != null) return; pid = e.pointerId; try { c.setPointerCapture(pid); } catch { /* ok */ } e.preventDefault(); call('down', e); });
+    c.addEventListener('pointermove', (e) => { if (e.pointerId === pid) call('move', e); });
+    const end = (type) => (e) => { if (e.pointerId !== pid) return; pid = null; call(type, e); };
+    c.addEventListener('pointerup', end('up')); c.addEventListener('pointercancel', end('cancel'));
   }
 
   _submit(payload) {

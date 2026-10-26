@@ -92,7 +92,7 @@ class TippRennen {
       const prog = p.uid === me ? this.taps : (snap.p && snap.p[p.uid]) || 0;
       const x = x0 + (x1 - x0) * clamp(prog / GOAL, 0, 1);
       const isMe = p.uid === me;
-      disc(g, x, y, Math.min(15, laneH / 2 - 3), p.colorHex, p.avatar, { ring: isMe ? '#ffe14d' : '#fff' });
+      disc(g, x, y, Math.min(15, laneH / 2 - 3), p.colorHex, p.avatar, { ring: isMe ? '#ffe14d' : p.ring });
       if (isMe) arrowDown(g, x, y - laneH / 2 + 1, '#ffe14d', 5);
     });
     const mine = this.fin != null ? `Im Ziel! ${this.fin.toFixed(1)} s` : `${this.taps} / ${GOAL}`;

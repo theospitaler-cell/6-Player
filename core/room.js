@@ -15,7 +15,7 @@ export const toList = (x) => (Array.isArray(x) ? x : Object.values(x || {})).fil
 
 function playerRecord(prof, color, tp) {
   return {
-    name: cleanName(prof.name) || 'Spieler', avatar: prof.avatar, color, ready: false, isBot: false,
+    name: cleanName(prof.name) || 'Spieler', avatar: prof.avatar, frame: prof.frame || 'weiss', color, ready: false, isBot: false,
     connected: true, lastSeen: TS, level: prof.level || 1, score: 0, wins: 0, rs: 0, joinedAt: tp.serverNow(),
   };
 }

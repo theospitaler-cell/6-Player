@@ -27,7 +27,7 @@ export const CATEGORIES = {
 
 export const DEFAULT_SETTINGS = {
   mode: 'vote',          // 'admin' | 'vote' | 'random'
-  partyType: 'cup',      // 'cup' | 'free'
+  partyType: 'cup',      // 'cup' | 'ko' | 'free'
   rounds: 7,
   onlyOnce: true,
   teamMode: 'aus',       // 'aus' | 'zufall' | 'fest'
@@ -37,6 +37,7 @@ export const DEFAULT_SETTINGS = {
   timeFactor: 1,         // 0.75 | 1 | 1.5
   colorMemorySec: 3,
   doubleFinal: true,
+  cup: 'frei',           // 'frei' oder ein Themen-Cup (core/cups.js)
   off: {},               // abgeschaltete Spiele  { spielId: true }
   offCats: {},           // abgeschaltete Kategorien { Kategorie: true }
 };
@@ -48,6 +49,7 @@ export const TIMING = {
   scoreboard: 4000,
   vote: 15000,
   roll: 2800,
+  bracket: 6500,
 };
 
 // Sehr einfacher Event-Emitter + globaler App-Zustand

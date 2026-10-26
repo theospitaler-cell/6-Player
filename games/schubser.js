@@ -186,7 +186,7 @@ class Schubser {
       const alive = cur[2] === 1;
       let scale = 1, a = 1;
       if (!alive) { const k = clamp((snap.t - cur[3]) / 0.8, 0, 1); scale = 1 - k * 0.8; a = 1 - k; if (a <= 0.02) continue; }
-      disc(g, x, y, PR * scale, p.colorHex, p.avatar, { ring: p.uid === me ? '#ffe14d' : '#fff', alpha: a, shadow: alive });
+      disc(g, x, y, PR * scale, p.colorHex, p.avatar, { ring: p.uid === me ? '#ffe14d' : p.ring, alpha: a, shadow: alive });
       if (alive) {
         nameTag(g, p.name, x, y + PR + 11, { me: p.uid === me });
         if (p.uid === me) arrowDown(g, x, y - PR - 8, '#ffe14d', 6);

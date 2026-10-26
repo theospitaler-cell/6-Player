@@ -97,11 +97,12 @@ class TicTacToe {
     return { ranks: [{ uid: win.uid, rank: 1, label: 'Sieg' }, { uid: lose.uid, rank: 2, label: 'Niederlage' }] };
   }
 
-  // Tipp auf das Spielfeld (Stage) → Eingabe
-  onStagePointer(x, y) {
+  // Tipp auf das Spielfeld → Eingabe an den Host
+  onPointer(type, x, y) {
+    if (type !== 'down') return;
     const cx = Math.floor((x - BX) / CELL), cy = Math.floor((y - BY) / CELL);
-    if (cx < 0 || cx > 2 || cy < 0 || cy > 2) return null;
-    return { cell: cy * 3 + cx, n: ++this.cnt };
+    if (cx < 0 || cx > 2 || cy < 0 || cy > 2) return;
+    this.ctx.send({ cell: cy * 3 + cx, n: ++this.cnt });
   }
   render(g, snap, me) {
     const W = 600, H = 350;
@@ -112,7 +113,7 @@ class TicTacToe {
     ps.forEach((p, i) => {
       const x = i === 0 ? 75 : W - 75, active = !snap.o && snap.t === i;
       if (active) { g.fillStyle = 'rgba(255,225,77,.25)'; rrect(g, x - 64, 60, 128, 190, 16); g.fill(); }
-      disc(g, x, 112, 28, p.colorHex, p.avatar, { ring: p.uid === me ? '#ffe14d' : '#fff' });
+      disc(g, x, 112, 28, p.colorHex, p.avatar, { ring: p.uid === me ? '#ffe14d' : p.ring });
       text(g, i === 0 ? '✕' : '○', x, 172, { size: 38, color: i === 0 ? '#ff7a95' : '#7ab6ff' });
       text(g, p.name.slice(0, 11), x, 212, { size: 14, color: p.uid === me ? '#ffe14d' : '#fff' });
       if (active) text(g, `⏱ ${snap.tl}`, x, 236, { size: 16, color: snap.tl <= 3 ? '#ff7a95' : '#ffe14d' });
@@ -151,7 +152,7 @@ class TicTacToe {
 export default {
   id: 'tictactoe', name: 'Tic-Tac-Toe', emoji: '❌', category: 'Brett',
   min: 2, max: 2, teams: 'none', duel: true, humansOnly: false,
-  sync: 'turns', controls: 'PICK', stageInput: true, ctlWidth: 0, duration: 90,
+  sync: 'turns', controls: 'PICK', pointer: true, ctlWidth: 0, duration: 90,
   view: { w: 600, h: 350 },
   howTo: ['Setze drei Zeichen in eine Reihe – waagerecht, senkrecht oder diagonal.', 'Pro Zug hast du 9 Sekunden. Duell: Es spielen die zwei mit den wenigsten Punkten.'],
   wertung: 'Sieger Platz 1, Verlierer Platz 2, sonst Unentschieden. Duell-Punkte: Sieger n, Verlierer 1, Zuschauer ⌈n/2⌉.',

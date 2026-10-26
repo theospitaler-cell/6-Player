@@ -2,6 +2,7 @@
 // (PICK-Spiele bauen ihre Oberfläche selbst – siehe mountUI in den Spielen.)
 import { h } from './ui.js';
 import { sfx, vibrate } from './audio.js';
+import { tiltSupported, needsPermission, requestTilt, tiltGranted, startTilt } from './tilt.js';
 
 const DEAD = 0.14;     // Totzone des Joysticks
 const JOY_R = 54;      // Radius in Pixeln
@@ -53,8 +54,9 @@ export function createControls(game, boxes, { onInput, color = '#ff4d6d', tapSid
     return api(offClass);
   }
 
-  if (kind === 'JOY' || kind === 'JOY+BTN') {
+  if (kind === 'JOY' || kind === 'JOY+BTN' || kind === 'TILT') {
     const hasBtn = kind === 'JOY+BTN';
+    const isTilt = kind === 'TILT';
     const labels = game.buttons || ['●'];
     const zone = h('div', { class: 'joy-zone' }, h('div', { class: 'joy-hint' }, h('span', null, '✥'), h('small', null, 'Hier ziehen')));
     const base = h('div', { class: 'joy-base' }, h('div', { class: 'joy-knob' }));
@@ -77,6 +79,26 @@ export function createControls(game, boxes, { onInput, color = '#ff4d6d', tapSid
     }
     left.appendChild(zone);
     if (btnBox) right.appendChild(btnBox);
+    // TILT: Neigungssensor liefert x/y; der Joystick bleibt als Ersatz (und überstimmt den Sensor, solange der Daumen drauf ist)
+    let tiltCtl = null, joyHeld = false;
+    if (isTilt) {
+      zone.classList.add('tilt');
+      zone.querySelector('.joy-hint').innerHTML = '<span>📱</span><small>Handy neigen<br>(oder hier ziehen)</small>';
+      const begin = () => {
+        if (tiltCtl || !tiltGranted()) return;
+        tiltCtl = startTilt((v) => {
+          if (joyHeld || !enabled) return;
+          if (v.x !== cur.x || v.y !== cur.y) { cur.x = v.x; cur.y = v.y; send(); }
+        });
+        cleanups.push(() => tiltCtl && tiltCtl.stop());
+      };
+      if (tiltSupported() && !needsPermission()) { requestTilt().then(begin); }
+      else if (tiltSupported()) {
+        const ask = h('button', { class: 'btn small tilt-ask', type: 'button' }, '📱 Sensor erlauben');
+        ask.addEventListener('pointerdown', async (e) => { e.preventDefault(); e.stopPropagation(); if (await requestTilt()) { ask.remove(); begin(); } else ask.textContent = 'Nicht erlaubt – nutze den Joystick'; });
+        zone.appendChild(ask);
+      }
+    }
 
     // schwebender Joystick: erscheint dort, wo der Daumen aufsetzt
     let pid = null, ox = 0, oy = 0;
@@ -93,7 +115,9 @@ export function createControls(game, boxes, { onInput, color = '#ff4d6d', tapSid
     };
     listen(zone, 'pointerdown', (e) => {
       if (!enabled || pid != null) return;
+      if (e.target.closest && e.target.closest('.tilt-ask')) return;
       e.preventDefault();
+      joyHeld = true;
       pid = e.pointerId;
       try { zone.setPointerCapture(pid); } catch { /* ok */ }
       const r = zone.getBoundingClientRect();
@@ -105,7 +129,7 @@ export function createControls(game, boxes, { onInput, color = '#ff4d6d', tapSid
     listen(zone, 'pointermove', (e) => { if (e.pointerId === pid) setVec(e.clientX - ox, e.clientY - oy); });
     const end = (e) => {
       if (e.pointerId !== pid) return;
-      pid = null; base.classList.remove('on'); zone.classList.remove('active');
+      pid = null; joyHeld = false; base.classList.remove('on'); zone.classList.remove('active');
       if (cur.x !== 0 || cur.y !== 0) { cur.x = 0; cur.y = 0; send(); }
     };
     listen(zone, 'pointerup', end); listen(zone, 'pointercancel', end);
